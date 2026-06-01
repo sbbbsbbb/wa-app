@@ -37,7 +37,7 @@ func main() {
 
 	clock := app.SystemClock{}
 	ids := app.RandomIDGenerator{}
-	engine, err := app.NewNativeEngine(clock, ids)
+	engine, err := app.NewNativeEngine(store, clock, ids)
 	if err != nil {
 		log.Fatalf("initialize wa-app native engine: %v", err)
 	}

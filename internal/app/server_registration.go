@@ -85,12 +85,17 @@ func (s *Server) submitVerificationCode(ctx context.Context, req *waappv1.Submit
 	if err := s.store.SaveRegistration(ctx, registration, workspaceID); err != nil {
 		return &waappv1.SubmitVerificationCodeResponse{Error: ToProtoError(err)}, nil
 	}
+	if registration.GetStatus() == waappv1.RegistrationStatus_REGISTRATION_STATUS_REGISTERED {
+		if _, err := s.saveWAAccount(ctx, workspaceID, withWAAccountStatus(account, waappv1.WAAccountStatus_WA_ACCOUNT_STATUS_ACTIVE, s.clock.Now())); err != nil {
+			return &waappv1.SubmitVerificationCodeResponse{Registration: registration, Error: ToProtoError(err)}, nil
+		}
+	}
 	loginState, err := s.loginStateFromRegistration(registration)
 	if err != nil {
 		return &waappv1.SubmitVerificationCodeResponse{Registration: registration, Error: ToProtoError(err)}, nil
 	}
 	if loginState != nil {
-		if err := s.store.SaveLoginState(ctx, loginState, workspaceID, "native-profile:"+profile.GetClientProfileId()); err != nil {
+		if err := s.store.SaveLoginState(ctx, loginState, workspaceID, "native-db:"+profile.GetClientProfileId()); err != nil {
 			return &waappv1.SubmitVerificationCodeResponse{Registration: registration, Error: ToProtoError(err)}, nil
 		}
 		s.ensureLongConnection(ctx, workspaceID, loginState)
@@ -164,7 +169,7 @@ func (s *Server) checkLoginState(ctx context.Context, req *waappv1.CheckLoginSta
 		check.Status = waappv1.LoginStateCheckStatus_LOGIN_STATE_CHECK_STATUS_ACTIVE
 	}
 	if s.applyLoginStateCheck(loginState, check, now) {
-		if err := s.store.SaveLoginState(ctx, loginState, workspaceID, "native-profile:"+loginState.GetClientProfileId()); err != nil {
+		if err := s.store.SaveLoginState(ctx, loginState, workspaceID, "native-db:"+loginState.GetClientProfileId()); err != nil {
 			return &waappv1.CheckLoginStateResponse{LoginState: loginState, Check: check, Error: ToProtoError(err)}, nil
 		}
 	}

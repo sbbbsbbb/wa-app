@@ -8,7 +8,7 @@ import (
 )
 
 func (s *Server) DecryptMessage(ctx context.Context, req *waappv1.DecryptMessageRequest) (*waappv1.DecryptMessageResponse, error) {
-	return s.decryptMessage(ctx, req, s.runner, wav1.WaOtpSource_WA_OTP_SOURCE_MANUAL_EXTRACTION)
+	return s.decryptMessage(ctx, req, s.runner, wav1.WaOtpSource_WA_OTP_SOURCE_AUTO_EXTRACTION)
 }
 
 func (s *Server) decryptMessage(ctx context.Context, req *waappv1.DecryptMessageRequest, runner ProtocolEngine, otpSource wav1.WaOtpSource) (*waappv1.DecryptMessageResponse, error) {
@@ -72,8 +72,27 @@ func (s *Server) ExtractCandidates(ctx context.Context, req *waappv1.ExtractCand
 	if err := s.store.SaveCandidates(ctx, workspaceID, candidates); err != nil {
 		return &waappv1.ExtractCandidatesResponse{Error: ToProtoError(err)}, nil
 	}
-	s.publishOTPCandidates(context.WithoutCancel(ctx), req.GetContext(), workspaceID, msg, session, candidates, wav1.WaOtpSource_WA_OTP_SOURCE_MANUAL_EXTRACTION)
+	s.publishOTPCandidates(context.WithoutCancel(ctx), req.GetContext(), workspaceID, msg, session, candidates, wav1.WaOtpSource_WA_OTP_SOURCE_AUTO_EXTRACTION)
 	return &waappv1.ExtractCandidatesResponse{Candidates: candidates}, nil
+}
+
+func (s *Server) ListAccountOtpMessages(ctx context.Context, req *waappv1.ListAccountOtpMessagesRequest) (*waappv1.ListAccountOtpMessagesResponse, error) {
+	if err := validateContext(req.GetContext()); err != nil {
+		return &waappv1.ListAccountOtpMessagesResponse{Error: ToProtoError(err)}, nil
+	}
+	workspaceID := req.GetContext().GetWorkspaceId()
+	accountID, err := requireWAAccountID(req.GetWaAccountId())
+	if err != nil {
+		return &waappv1.ListAccountOtpMessagesResponse{Error: ToProtoError(err)}, nil
+	}
+	if _, err := s.getWAAccount(ctx, workspaceID, accountID); err != nil {
+		return &waappv1.ListAccountOtpMessagesResponse{Error: ToProtoError(err)}, nil
+	}
+	items, nextCursor, err := s.store.ListAccountOTPMessages(ctx, workspaceID, accountID, req.GetCursor(), int(req.GetLimit()), req.GetIncludeSensitiveValues())
+	if err != nil {
+		return &waappv1.ListAccountOtpMessagesResponse{Error: ToProtoError(err)}, nil
+	}
+	return &waappv1.ListAccountOtpMessagesResponse{OtpMessages: items, NextCursor: nextCursor}, nil
 }
 
 func filterCandidates(candidates []*waappv1.ExtractedCandidate, kinds []waappv1.CandidateKind) []*waappv1.ExtractedCandidate {

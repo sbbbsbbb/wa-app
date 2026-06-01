@@ -5,7 +5,8 @@
 // source: byte/v/forge/waapp/v1/extraction.proto
 
 /* eslint-disable */
-import type { RequestContext, SensitiveText, WaError } from "./common";
+import type { WaOtpSource } from "@byte-v-forge/common-ui/proto/byte/v/forge/contracts/wa/v1/wa";
+import type { AuditStamp, RequestContext, SensitiveText, WaError } from "./common";
 
 export const protobufPackage = "byte.v.forge.waapp.v1";
 
@@ -55,6 +56,20 @@ export interface ExtractedCandidate {
   extracted_at: string | undefined;
 }
 
+export interface OtpMessage {
+  otp_message_id: string;
+  wa_account_id: string;
+  client_profile_id: string;
+  registered_identity_id: string;
+  message_id: string;
+  candidate_id: string;
+  source: WaOtpSource;
+  source_party: string;
+  otp: SensitiveText | undefined;
+  received_at: string | undefined;
+  audit: AuditStamp | undefined;
+}
+
 export interface DecryptMessageRequest {
   context: RequestContext | undefined;
   message_id: string;
@@ -77,5 +92,19 @@ export interface ExtractCandidatesRequest {
 
 export interface ExtractCandidatesResponse {
   candidates: ExtractedCandidate[];
+  error: WaError | undefined;
+}
+
+export interface ListAccountOtpMessagesRequest {
+  context: RequestContext | undefined;
+  wa_account_id: string;
+  limit: number;
+  cursor: string;
+  include_sensitive_values: boolean;
+}
+
+export interface ListAccountOtpMessagesResponse {
+  otp_messages: OtpMessage[];
+  next_cursor: string;
   error: WaError | undefined;
 }

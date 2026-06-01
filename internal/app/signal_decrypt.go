@@ -53,7 +53,7 @@ func decryptNativeSignalPayload(state *nativeState, payload nativeMessagePayload
 	if err != nil {
 		return signalDecryptOutput{}, err
 	}
-	typeHint := strings.ToLower(firstNonEmpty(payload.EncType, "auto"))
+	typeHint := normalizeNativeSignalEncType(payload.EncType)
 	if typeHint == "auto" {
 		var errors []string
 		for _, candidate := range []string{"pkmsg", "msg"} {
@@ -66,6 +66,21 @@ func decryptNativeSignalPayload(state *nativeState, payload nativeMessagePayload
 		return signalDecryptOutput{}, fmt.Errorf("auto decrypt failed; %s", strings.Join(errors, "; "))
 	}
 	return decryptNativeSignalPayloadByType(state, enc, typeHint, payload.Sender, commit)
+}
+
+func normalizeNativeSignalEncType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "auto":
+		return "auto"
+	case "<tok:50>":
+		return "skmsg"
+	case "<tok:77>":
+		return "msg"
+	case "<tok:83>":
+		return "pkmsg"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
 }
 
 func decryptNativeSignalPayloadByType(state *nativeState, enc []byte, encType string, sender string, commit bool) (signalDecryptOutput, error) {

@@ -126,7 +126,7 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ { workspace_id: $('Normalize Registration Input').first().json.workspace_id, job_id: $('Normalize Registration Input').first().json.job_id, phone: $('Normalize Registration Input').first().json.phone, verification_request_id: (($('Request SMS OTP').first().json.body || $('Request SMS OTP').first().json).verification_request_id || (($('Request SMS OTP').first().json.body || $('Request SMS OTP').first().json).verification_request || {}).verification_request_id || ''), timeout_seconds: 300, resume_url: $execution.resumeUrl } }}",
+        "jsonBody": "={{ { workspace_id: $('Normalize Registration Input').first().json.workspace_id, job_id: $('Normalize Registration Input').first().json.job_id, phone: $('Normalize Registration Input').first().json.phone, wa_account_id: (($('Commit Fingerprint To Profile').first().json.body || $('Commit Fingerprint To Profile').first().json).wa_account_id || ''), verification_request_id: (($('Request SMS OTP').first().json.body || $('Request SMS OTP').first().json).verification_request_id || (($('Request SMS OTP').first().json.body || $('Request SMS OTP').first().json).verification_request || {}).verification_request_id || ''), timeout_seconds: 300, resume_url: $execution.resumeUrl } }}",
         "options": {
           "response": {
             "response": {

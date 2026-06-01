@@ -19,8 +19,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	WaExtractionService_DecryptMessage_FullMethodName    = "/byte.v.forge.waapp.v1.WaExtractionService/DecryptMessage"
-	WaExtractionService_ExtractCandidates_FullMethodName = "/byte.v.forge.waapp.v1.WaExtractionService/ExtractCandidates"
+	WaExtractionService_DecryptMessage_FullMethodName         = "/byte.v.forge.waapp.v1.WaExtractionService/DecryptMessage"
+	WaExtractionService_ExtractCandidates_FullMethodName      = "/byte.v.forge.waapp.v1.WaExtractionService/ExtractCandidates"
+	WaExtractionService_ListAccountOtpMessages_FullMethodName = "/byte.v.forge.waapp.v1.WaExtractionService/ListAccountOtpMessages"
 )
 
 // WaExtractionServiceClient is the client API for WaExtractionService service.
@@ -29,6 +30,7 @@ const (
 type WaExtractionServiceClient interface {
 	DecryptMessage(ctx context.Context, in *DecryptMessageRequest, opts ...grpc.CallOption) (*DecryptMessageResponse, error)
 	ExtractCandidates(ctx context.Context, in *ExtractCandidatesRequest, opts ...grpc.CallOption) (*ExtractCandidatesResponse, error)
+	ListAccountOtpMessages(ctx context.Context, in *ListAccountOtpMessagesRequest, opts ...grpc.CallOption) (*ListAccountOtpMessagesResponse, error)
 }
 
 type waExtractionServiceClient struct {
@@ -59,12 +61,23 @@ func (c *waExtractionServiceClient) ExtractCandidates(ctx context.Context, in *E
 	return out, nil
 }
 
+func (c *waExtractionServiceClient) ListAccountOtpMessages(ctx context.Context, in *ListAccountOtpMessagesRequest, opts ...grpc.CallOption) (*ListAccountOtpMessagesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListAccountOtpMessagesResponse)
+	err := c.cc.Invoke(ctx, WaExtractionService_ListAccountOtpMessages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WaExtractionServiceServer is the server API for WaExtractionService service.
 // All implementations must embed UnimplementedWaExtractionServiceServer
 // for forward compatibility.
 type WaExtractionServiceServer interface {
 	DecryptMessage(context.Context, *DecryptMessageRequest) (*DecryptMessageResponse, error)
 	ExtractCandidates(context.Context, *ExtractCandidatesRequest) (*ExtractCandidatesResponse, error)
+	ListAccountOtpMessages(context.Context, *ListAccountOtpMessagesRequest) (*ListAccountOtpMessagesResponse, error)
 	mustEmbedUnimplementedWaExtractionServiceServer()
 }
 
@@ -80,6 +93,9 @@ func (UnimplementedWaExtractionServiceServer) DecryptMessage(context.Context, *D
 }
 func (UnimplementedWaExtractionServiceServer) ExtractCandidates(context.Context, *ExtractCandidatesRequest) (*ExtractCandidatesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExtractCandidates not implemented")
+}
+func (UnimplementedWaExtractionServiceServer) ListAccountOtpMessages(context.Context, *ListAccountOtpMessagesRequest) (*ListAccountOtpMessagesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListAccountOtpMessages not implemented")
 }
 func (UnimplementedWaExtractionServiceServer) mustEmbedUnimplementedWaExtractionServiceServer() {}
 func (UnimplementedWaExtractionServiceServer) testEmbeddedByValue()                             {}
@@ -138,6 +154,24 @@ func _WaExtractionService_ExtractCandidates_Handler(srv interface{}, ctx context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WaExtractionService_ListAccountOtpMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListAccountOtpMessagesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WaExtractionServiceServer).ListAccountOtpMessages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WaExtractionService_ListAccountOtpMessages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WaExtractionServiceServer).ListAccountOtpMessages(ctx, req.(*ListAccountOtpMessagesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // WaExtractionService_ServiceDesc is the grpc.ServiceDesc for WaExtractionService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -152,6 +186,10 @@ var WaExtractionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExtractCandidates",
 			Handler:    _WaExtractionService_ExtractCandidates_Handler,
+		},
+		{
+			MethodName: "ListAccountOtpMessages",
+			Handler:    _WaExtractionService_ListAccountOtpMessages_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -116,19 +116,25 @@ func (c *chatdClient) receiveBatch(ctx context.Context, state nativeState, input
 			continue
 		}
 		if len(encs) == 0 {
-			messages = append(messages, &waappv1.InboundMessage{MessageId: ids.NewID("wamsg_"), MessageSessionId: input.MessageSessionID, Kind: inboundKind(node.Tag), EncryptionState: waappv1.MessageEncryptionState_MESSAGE_ENCRYPTION_STATE_PLAINTEXT, AckStatus: ackStatusForNode(node), SenderRef: firstNonEmpty(node.Attrs["participant"], node.Attrs["from"]), PayloadRef: "node:" + redacted(nodePayloadSummary(node)), ReceivedAt: timestamppb.New(now)})
+			sender := firstNonEmpty(node.Attrs["participant"], node.Attrs["from"])
+			payloadSummary := nodePayloadSummary(node)
+			messages = append(messages, &waappv1.InboundMessage{MessageId: inboundMessageID(input.WAAccountID, node.Attrs["id"], node.Tag, sender, payloadSummary), MessageSessionId: input.MessageSessionID, Kind: inboundKind(node.Tag), EncryptionState: waappv1.MessageEncryptionState_MESSAGE_ENCRYPTION_STATE_PLAINTEXT, AckStatus: ackStatusForNode(node), SenderRef: sender, PayloadRef: "node:" + redacted(payloadSummary), ReceivedAt: timestamppb.New(now)})
 			continue
 		}
 		for _, enc := range encs {
-			payloadRef := payloadRefForEnc(input.MessageSessionID, enc.Payload)
+			payloadRef := payloadRefForEnc(input.WAAccountID, enc.Payload)
 			payloads = append(payloads, enc)
-			messages = append(messages, &waappv1.InboundMessage{MessageId: ids.NewID("wamsg_"), MessageSessionId: input.MessageSessionID, Kind: inboundKind(node.Tag), EncryptionState: waappv1.MessageEncryptionState_MESSAGE_ENCRYPTION_STATE_ENCRYPTED, AckStatus: ackStatusForNode(node), SenderRef: enc.Sender, PayloadRef: payloadRef, ReceivedAt: timestamppb.New(now)})
+			messages = append(messages, &waappv1.InboundMessage{MessageId: inboundMessageID(input.WAAccountID, enc.StanzaID, node.Tag, enc.Sender, enc.Path+":"+hexKey(enc.Payload)), MessageSessionId: input.MessageSessionID, Kind: inboundKind(node.Tag), EncryptionState: waappv1.MessageEncryptionState_MESSAGE_ENCRYPTION_STATE_ENCRYPTED, AckStatus: ackStatusForNode(node), SenderRef: enc.Sender, PayloadRef: payloadRef, ReceivedAt: timestamppb.New(now)})
 			if len(messages) >= maxMessages {
 				break
 			}
 		}
 	}
 	return messages, payloads, nil
+}
+
+func inboundMessageID(accountID string, stanzaID string, tag string, sender string, fingerprint string) string {
+	return "wamsg_" + stableID(strings.Join([]string{accountID, stanzaID, tag, sender, fingerprint}, ":"))
 }
 
 func (c *chatdClient) checkLoginState(ctx context.Context, state nativeState, input EngineLoginCheckInput, appVersion string) error {

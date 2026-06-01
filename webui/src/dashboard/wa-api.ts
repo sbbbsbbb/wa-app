@@ -1,4 +1,5 @@
 import { ACCOUNT_PAGE_SIZE, api, fetchAccountList } from '@byte-v-forge/common-ui';
+import type { ListAccountOtpMessagesResponse } from '../proto/byte/v/forge/waapp/v1/extraction';
 import type { GetLongConnectionStatusResponse, LongConnectionState } from '../proto/byte/v/forge/waapp/v1/messaging';
 import type { CreateWAAccountResponse, ListWAAccountsResponse, WAAccount } from '../proto/byte/v/forge/waapp/v1/profile';
 
@@ -39,6 +40,7 @@ export type WaHealthResponse = {
 export const waKeys = {
   health: ['wa', 'health'] as const,
   accounts: (workspaceId: string) => ['wa', 'accounts', workspaceId] as const,
+  otpMessages: (workspaceId: string, waAccountId: string) => ['wa', 'otp-messages', workspaceId, waAccountId] as const,
   connections: (workspaceId: string) => ['wa', 'connections', workspaceId] as const
 };
 
@@ -59,6 +61,16 @@ export function getWaAccounts(workspaceId: string, cursor = '') {
   });
 }
 
+export function getWaAccountOtpMessages(workspaceId: string, waAccountId: string, cursor = '') {
+  const params = new URLSearchParams({
+    workspace_id: workspaceId || 'default',
+    wa_account_id: waAccountId,
+    limit: '20'
+  });
+  if (cursor) params.set('cursor', cursor);
+  return api<ListAccountOtpMessagesResponse>(`/api/wa/account-otp-messages?${params.toString()}`);
+}
+
 export async function createWaAccount(input: { phone: string; country_calling_code: string }, workspaceId = 'default') {
   const resp = await api<CreateWAAccountResponse>('/api/wa/accounts', {
     method: 'POST',
@@ -73,6 +85,32 @@ export function probeWaPhoneSMS(input: WaPhoneInput) {
   return api<WaWorkflowResponse>('/api/wa/phone/sms-probe', { method: 'POST', body: JSON.stringify(input) });
 }
 
+export function probeWaAccount(account: WAAccount, workspaceId = 'default') {
+  return api<WaWorkflowResponse>('/api/wa/phone/sms-probe', { method: 'POST', body: JSON.stringify(waAccountActionPayload(account, workspaceId)) });
+}
+
+export function registerWaAccount(account: WAAccount, workspaceId = 'default') {
+  return api<WaWorkflowResponse>('/api/wa/register', { method: 'POST', body: JSON.stringify(waAccountActionPayload(account, workspaceId)) });
+}
+
+export function submitWaRegistrationOTP(account: WAAccount, otp: string, workspaceId = 'default') {
+  const payload = waAccountActionPayload(account, workspaceId);
+  return api<WaWorkflowResponse>('/api/wa/actions/registration/resume-otp', {
+    method: 'POST',
+    body: JSON.stringify({ workspace_id: payload.workspace_id, wa_account_id: payload.wa_account_id, otp }),
+  });
+}
+
 export function checkWaLoginState(input: { workspace_id?: string; login_state_id?: string; registered_identity_id?: string; wa_account_id?: string; client_profile_id?: string; remote_timeout_seconds?: number }) {
   return api<WaWorkflowResponse>('/api/wa/login-state-check', { method: 'POST', body: JSON.stringify(input) });
+}
+
+function waAccountActionPayload(account: WAAccount, workspaceId: string) {
+  const phone = account.phone;
+  if (!phone?.e164_number || !phone.country_calling_code) throw new Error('WAAccount phone is incomplete');
+  return {
+    workspace_id: account.workspace_id || workspaceId,
+    wa_account_id: account.account?.key?.account_id || '',
+    phone,
+  };
 }

@@ -16,10 +16,11 @@ type chatdNode struct {
 }
 
 type chatdEncPayload struct {
-	Sender  string
-	EncType string
-	Path    string
-	Payload []byte
+	StanzaID string
+	Sender   string
+	EncType  string
+	Path     string
+	Payload  []byte
 }
 
 type tokenDictionary struct {
@@ -60,8 +61,11 @@ func fallbackTokenDictionary() *tokenDictionary {
 		42:  "read",
 		43:  "urn:xmpp:ping",
 		48:  "unavailable",
+		50:  "skmsg",
 		52:  "composing",
 		75:  "success",
+		77:  "msg",
+		83:  "pkmsg",
 		86:  "ping",
 		90:  "set",
 		105: "value",
@@ -510,25 +514,29 @@ func buildAckForNode(node chatdNode) (chatdNode, bool) {
 
 func iterEncPayloads(node chatdNode) []chatdEncPayload {
 	out := []chatdEncPayload{}
-	var walk func(chatdNode, []string, string)
-	walk = func(current chatdNode, path []string, sender string) {
+	var walk func(chatdNode, []string, string, string)
+	walk = func(current chatdNode, path []string, sender string, stanzaID string) {
 		currentPath := append(append([]string{}, path...), current.Tag)
 		currentSender := sender
+		currentStanzaID := stanzaID
+		if id := current.Attrs["id"]; id != "" {
+			currentStanzaID = id
+		}
 		if current.Tag == "message" {
 			currentSender = firstNonEmpty(current.Attrs["participant"], current.Attrs["from"], sender)
 		}
 		if current.Tag == "enc" {
 			if raw, ok := current.Content.([]byte); ok {
-				out = append(out, chatdEncPayload{Sender: currentSender, EncType: firstNonEmpty(current.Attrs["type"], current.Attrs["v"], "auto"), Path: strings.Join(currentPath, "/"), Payload: raw})
+				out = append(out, chatdEncPayload{StanzaID: currentStanzaID, Sender: currentSender, EncType: firstNonEmpty(current.Attrs["type"], current.Attrs["v"], "auto"), Path: strings.Join(currentPath, "/"), Payload: raw})
 			}
 		}
 		if children, ok := current.Content.([]chatdNode); ok {
 			for _, child := range children {
-				walk(child, currentPath, currentSender)
+				walk(child, currentPath, currentSender, currentStanzaID)
 			}
 		}
 	}
-	walk(node, nil, "")
+	walk(node, nil, "", "")
 	return out
 }
 
@@ -544,8 +552,8 @@ func nodePayloadSummary(node chatdNode) string {
 	return strings.Join(parts, " ")
 }
 
-func payloadRefForEnc(messageSessionID string, payload []byte) string {
-	return "native-enc:" + messageSessionID + ":" + hexKey(payload)[:24]
+func payloadRefForEnc(accountID string, payload []byte) string {
+	return "native-enc:" + stableID(accountID+":"+hexKey(payload))
 }
 
 func timeNowMillis() int64 {

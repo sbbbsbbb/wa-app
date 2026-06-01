@@ -125,7 +125,7 @@ func (s *Server) CreateWAAccount(ctx context.Context, req *waappv1.CreateWAAccou
 		return &waappv1.CreateWAAccountResponse{Account: existing}, nil
 	}
 	now := s.clock.Now()
-	account := newWAAccount(s.ids.NewID("waacc_"), workspaceID, phone, waappv1.WAAccountStatus_WA_ACCOUNT_STATUS_ACTIVE, &waappv1.AuditStamp{CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now)})
+	account := newWAAccount(s.ids.NewID("waacc_"), workspaceID, phone, waappv1.WAAccountStatus_WA_ACCOUNT_STATUS_PENDING_REGISTRATION, &waappv1.AuditStamp{CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now)})
 	account, err := s.saveWAAccount(ctx, workspaceID, account)
 	if err != nil {
 		return &waappv1.CreateWAAccountResponse{Error: ToProtoError(err)}, nil

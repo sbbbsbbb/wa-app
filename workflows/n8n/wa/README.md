@@ -62,6 +62,7 @@ OTP 回调向 n8n wait 节点的 resume URL 发送：
 | `POST /fingerprints/commit` | 将注册阶段生成的临时指纹提交为号码设备指纹，并返回 `wa_account_id`、`client_profile_id`、`protocol_profile_id`。 |
 | `POST /registration/request-sms-otp` | 发起 SMS OTP 请求。 |
 | `POST /registration/await-otp` | 记录 n8n resume URL 与等待窗口，便于外部 OTP 采集侧回调。 |
+| `POST /registration/resume-otp` | 前端兜底一次性提交 OTP 到当前等待中的注册流程；不写 OTP 历史。 |
 | `POST /registration/submit-otp` | 提交 OTP 完成注册。 |
 | `POST /registration/persist-login-state` | 注册成功后幂等确认登录态投影，并返回脱敏登录态摘要。 |
 | `POST /registration/check-login-state` | 使用原生 chatd 被动短连接握手检测账号远端登录态；可传 `login_state_id`、`registered_identity_id` 或 `wa_account_id`/`client_profile_id`。 |

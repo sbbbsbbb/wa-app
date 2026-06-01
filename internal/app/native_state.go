@@ -11,8 +11,6 @@ import (
 	"math/big"
 	mrand "math/rand"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -119,14 +117,6 @@ func (s nativeState) codeParams() map[string]string {
 	return params
 }
 
-func loadNativeState(dir string) (nativeState, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "state.json"))
-	if err != nil {
-		return nativeState{}, err
-	}
-	return unmarshalNativeState(data)
-}
-
 func (s *nativeState) ensureMaps() {
 	if s.MessagePayloads == nil {
 		s.MessagePayloads = map[string]nativeMessagePayload{}
@@ -152,17 +142,6 @@ func buildNativeOneTimePreKeys(count int) []nativeSignalPreKey {
 		out = append(out, nativeSignalPreKey{ID: int32(i + 1), KeyPair: kp})
 	}
 	return out
-}
-
-func saveNativeState(dir string, state nativeState) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
-	data, err := marshalNativeState(state)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(filepath.Join(dir, "state.json"), data, 0o600)
 }
 
 func marshalNativeState(state nativeState) ([]byte, error) {

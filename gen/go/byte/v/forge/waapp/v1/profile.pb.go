@@ -26,10 +26,11 @@ const (
 type WAAccountStatus int32
 
 const (
-	WAAccountStatus_WA_ACCOUNT_STATUS_UNSPECIFIED WAAccountStatus = 0
-	WAAccountStatus_WA_ACCOUNT_STATUS_ACTIVE      WAAccountStatus = 1
-	WAAccountStatus_WA_ACCOUNT_STATUS_PAUSED      WAAccountStatus = 2
-	WAAccountStatus_WA_ACCOUNT_STATUS_ARCHIVED    WAAccountStatus = 3
+	WAAccountStatus_WA_ACCOUNT_STATUS_UNSPECIFIED          WAAccountStatus = 0
+	WAAccountStatus_WA_ACCOUNT_STATUS_ACTIVE               WAAccountStatus = 1
+	WAAccountStatus_WA_ACCOUNT_STATUS_PAUSED               WAAccountStatus = 2
+	WAAccountStatus_WA_ACCOUNT_STATUS_ARCHIVED             WAAccountStatus = 3
+	WAAccountStatus_WA_ACCOUNT_STATUS_PENDING_REGISTRATION WAAccountStatus = 4
 )
 
 // Enum value maps for WAAccountStatus.
@@ -39,12 +40,14 @@ var (
 		1: "WA_ACCOUNT_STATUS_ACTIVE",
 		2: "WA_ACCOUNT_STATUS_PAUSED",
 		3: "WA_ACCOUNT_STATUS_ARCHIVED",
+		4: "WA_ACCOUNT_STATUS_PENDING_REGISTRATION",
 	}
 	WAAccountStatus_value = map[string]int32{
-		"WA_ACCOUNT_STATUS_UNSPECIFIED": 0,
-		"WA_ACCOUNT_STATUS_ACTIVE":      1,
-		"WA_ACCOUNT_STATUS_PAUSED":      2,
-		"WA_ACCOUNT_STATUS_ARCHIVED":    3,
+		"WA_ACCOUNT_STATUS_UNSPECIFIED":          0,
+		"WA_ACCOUNT_STATUS_ACTIVE":               1,
+		"WA_ACCOUNT_STATUS_PAUSED":               2,
+		"WA_ACCOUNT_STATUS_ARCHIVED":             3,
+		"WA_ACCOUNT_STATUS_PENDING_REGISTRATION": 4,
 	}
 )
 
@@ -1070,12 +1073,13 @@ const file_byte_v_forge_waapp_v1_profile_proto_rawDesc = "" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\"\xa0\x01\n" +
 	"\x1bRetireClientProfileResponse\x12K\n" +
 	"\x0eclient_profile\x18\x01 \x01(\v2$.byte.v.forge.waapp.v1.ClientProfileR\rclientProfile\x124\n" +
-	"\x05error\x18\x02 \x01(\v2\x1e.byte.v.forge.waapp.v1.WaErrorR\x05error*\x90\x01\n" +
+	"\x05error\x18\x02 \x01(\v2\x1e.byte.v.forge.waapp.v1.WaErrorR\x05error*\xbc\x01\n" +
 	"\x0fWAAccountStatus\x12!\n" +
 	"\x1dWA_ACCOUNT_STATUS_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18WA_ACCOUNT_STATUS_ACTIVE\x10\x01\x12\x1c\n" +
 	"\x18WA_ACCOUNT_STATUS_PAUSED\x10\x02\x12\x1e\n" +
-	"\x1aWA_ACCOUNT_STATUS_ARCHIVED\x10\x03*\xc9\x01\n" +
+	"\x1aWA_ACCOUNT_STATUS_ARCHIVED\x10\x03\x12*\n" +
+	"&WA_ACCOUNT_STATUS_PENDING_REGISTRATION\x10\x04*\xc9\x01\n" +
 	"\x13ClientProfileStatus\x12%\n" +
 	"!CLIENT_PROFILE_STATUS_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fCLIENT_PROFILE_STATUS_PREPARING\x10\x01\x12\x1f\n" +

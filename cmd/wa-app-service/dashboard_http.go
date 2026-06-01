@@ -54,6 +54,7 @@ func runDashboardHTTP(ctx context.Context, listenAddr, staticDir, n8nWebhookBase
 	mux.HandleFunc("/api/wa/register", server.handleRegister)
 	mux.HandleFunc("/api/wa/login-state-check", server.handleLoginStateCheck)
 	mux.HandleFunc("/api/wa/accounts", server.handleAccounts)
+	mux.HandleFunc("/api/wa/account-otp-messages", server.handleAccountOTPMessages)
 	mux.HandleFunc("/api/wa/long-connections", server.handleLongConnections)
 	mux.Handle("/api/wa/actions/", server.actionHandler)
 	mux.Handle("/mf/wa/", http.StripPrefix("/mf/wa/", noCacheFileServer(server.staticDir)))
@@ -157,6 +158,33 @@ func (s *dashboardHTTP) handleCreateAccount(w http.ResponseWriter, r *http.Reque
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "create WA account failed"})
+		return
+	}
+	writeProtoJSON(w, http.StatusOK, resp)
+}
+
+func (s *dashboardHTTP) handleAccountOTPMessages(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if s.service == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "wa-app service is not configured"})
+		return
+	}
+	q := r.URL.Query()
+	resp, err := s.service.ListAccountOtpMessages(r.Context(), &waappv1.ListAccountOtpMessagesRequest{
+		Context: &waappv1.RequestContext{
+			WorkspaceId: firstNonEmpty(q.Get("workspace_id"), "default"),
+			RequestId:   newRequestID("wa-otp-list"),
+		},
+		WaAccountId:            q.Get("wa_account_id"),
+		Limit:                  int32(positiveInt(q.Get("limit"), 20)),
+		Cursor:                 q.Get("cursor"),
+		IncludeSensitiveValues: true,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "load WA OTP history failed"})
 		return
 	}
 	writeProtoJSON(w, http.StatusOK, resp)

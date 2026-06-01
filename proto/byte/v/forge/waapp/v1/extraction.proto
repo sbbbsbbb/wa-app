@@ -3,6 +3,7 @@ syntax = "proto3";
 package byte.v.forge.waapp.v1;
 
 import "byte/v/forge/waapp/v1/common.proto";
+import "byte/v/forge/contracts/wa/v1/wa.proto";
 import "google/protobuf/timestamp.proto";
 
 option csharp_namespace = "ByteVForge.WaApp.V1";
@@ -15,6 +16,7 @@ option php_namespace = "ByteVForge\\WaApp\\V1";
 service WaExtractionService {
   rpc DecryptMessage(DecryptMessageRequest) returns (DecryptMessageResponse);
   rpc ExtractCandidates(ExtractCandidatesRequest) returns (ExtractCandidatesResponse);
+  rpc ListAccountOtpMessages(ListAccountOtpMessagesRequest) returns (ListAccountOtpMessagesResponse);
 }
 
 enum DecryptionStatus {
@@ -60,6 +62,20 @@ message ExtractedCandidate {
   google.protobuf.Timestamp extracted_at = 7;
 }
 
+message OtpMessage {
+  string otp_message_id = 1;
+  string wa_account_id = 2;
+  string client_profile_id = 3;
+  string registered_identity_id = 4;
+  string message_id = 5;
+  string candidate_id = 6;
+  byte.v.forge.contracts.wa.v1.WaOtpSource source = 7;
+  string source_party = 8;
+  SensitiveText otp = 9;
+  google.protobuf.Timestamp received_at = 10;
+  AuditStamp audit = 11;
+}
+
 message DecryptMessageRequest {
   RequestContext context = 1;
   string message_id = 2;
@@ -83,4 +99,18 @@ message ExtractCandidatesRequest {
 message ExtractCandidatesResponse {
   repeated ExtractedCandidate candidates = 1;
   WaError error = 2;
+}
+
+message ListAccountOtpMessagesRequest {
+  RequestContext context = 1;
+  string wa_account_id = 2;
+  int32 limit = 3;
+  string cursor = 4;
+  bool include_sensitive_values = 5;
+}
+
+message ListAccountOtpMessagesResponse {
+  repeated OtpMessage otp_messages = 1;
+  string next_cursor = 2;
+  WaError error = 3;
 }

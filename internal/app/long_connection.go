@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	longConnectionWaitTimeout = 25 * time.Second
-	longConnectionMaxBackoff  = 30 * time.Second
+	longConnectionWaitTimeout  = 25 * time.Second
+	longConnectionMaxBackoff   = 30 * time.Second
+	longConnectionDecryptLimit = 100
 )
 
 type LongConnectionManager struct {
@@ -210,6 +211,7 @@ func (m *LongConnectionManager) runEntry(ctx context.Context, workspaceID string
 			reconnects++
 			continue
 		}
+		m.decryptPendingMessages(ctx, workspaceID, session, runner)
 		for ctx.Err() == nil {
 			resp, err := m.server.receiveMessageBatch(ctx, &waappv1.ReceiveMessageBatchRequest{Context: &waappv1.RequestContext{WorkspaceId: workspaceID, RequestId: m.server.ids.NewID("wa-rx_"), CorrelationId: loginState.GetLoginStateId()}, MessageSessionId: session.GetMessageSessionId(), MaxMessages: 10, WaitTimeout: durationpb.New(longConnectionWaitTimeout)}, runner)
 			if err != nil {
@@ -262,6 +264,19 @@ func (m *LongConnectionManager) openSession(ctx context.Context, workspaceID str
 	return resp.GetSession(), nil
 }
 
+func (m *LongConnectionManager) decryptPendingMessages(ctx context.Context, workspaceID string, session *waappv1.MessageSession, runner ProtocolEngine) {
+	messages, err := m.server.store.ListPendingEncryptedInboundMessages(ctx, workspaceID, session.GetWaAccountId(), session.GetClientProfileId(), longConnectionDecryptLimit)
+	if err != nil {
+		log.Printf("WA long connection pending decrypt load failed: %v", sanitizeEventPublishError(err))
+		return
+	}
+	if len(messages) == 0 {
+		return
+	}
+	log.Printf("WA long connection retry pending decrypt: count=%d", len(messages))
+	m.decryptReceivedMessages(ctx, workspaceID, session, messages, runner)
+}
+
 func (m *LongConnectionManager) decryptReceivedMessages(ctx context.Context, workspaceID string, session *waappv1.MessageSession, messages []*waappv1.InboundMessage, runner ProtocolEngine) {
 	for _, msg := range messages {
 		if msg.GetEncryptionState() == waappv1.MessageEncryptionState_MESSAGE_ENCRYPTION_STATE_PLAINTEXT && !strings.HasPrefix(msg.GetPayloadRef(), "plaintext:") {
@@ -269,10 +284,10 @@ func (m *LongConnectionManager) decryptReceivedMessages(ctx context.Context, wor
 		}
 		resp, err := m.server.decryptMessage(ctx, &waappv1.DecryptMessageRequest{Context: &waappv1.RequestContext{WorkspaceId: workspaceID, RequestId: m.server.ids.NewID("wa-dec_"), CorrelationId: session.GetRegisteredIdentityId()}, MessageId: msg.GetMessageId(), SessionCommitPolicy: waappv1.SessionCommitPolicy_SESSION_COMMIT_POLICY_COMMIT_LEARNED_STATE, IncludeSensitivePlaintext: true}, runner, wav1.WaOtpSource_WA_OTP_SOURCE_LONG_CONNECTION)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("WA long connection decrypt failed: message_id=%s", msg.GetMessageId())
+			log.Printf("WA long connection decrypt failed: message_id=%s error=%v", msg.GetMessageId(), sanitizeEventPublishError(err))
 		}
-		if resp.GetError() != nil {
-			log.Printf("WA long connection decrypt failed: message_id=%s", msg.GetMessageId())
+		if resp != nil && resp.GetError() != nil {
+			log.Printf("WA long connection decrypt failed: message_id=%s code=%s retryable=%t", msg.GetMessageId(), resp.GetError().GetCode().String(), resp.GetError().GetRetryable())
 		}
 	}
 }

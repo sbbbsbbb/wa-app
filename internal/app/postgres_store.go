@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/byte-v-forge/common-lib/pagex"
@@ -49,8 +50,8 @@ func (s *PostgresStore) Close() {
 func (s *PostgresStore) validate(ctx context.Context) error {
 	for _, table := range []string{
 		"wa_app_artifacts", "wa_protocol_profiles", "wa_accounts", "wa_client_profiles", "wa_account_probes",
-		"wa_verification_requests", "wa_registrations", "wa_login_states", "wa_message_sessions", "wa_inbound_messages",
-		"wa_decrypted_messages", "wa_extracted_candidates",
+		"wa_client_profile_states", "wa_verification_requests", "wa_registrations", "wa_login_states", "wa_message_sessions", "wa_inbound_messages",
+		"wa_decrypted_messages", "wa_extracted_candidates", "wa_otp_messages",
 	} {
 		var exists bool
 		if err := s.pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil {
@@ -183,6 +184,27 @@ func (s *PostgresStore) GetClientProfile(ctx context.Context, workspaceID string
 		return nil, notFound(err, waappv1.WaErrorCode_WA_ERROR_CODE_PROFILE_NOT_FOUND, "client profile not found")
 	}
 	return r.toProto(), nil
+}
+
+func (s *PostgresStore) SaveNativeState(ctx context.Context, workspaceID string, clientProfileID string, state nativeState) error {
+	data, err := marshalNativeState(state)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `INSERT INTO wa_client_profile_states (client_profile_id, workspace_id, state_json, created_at, updated_at)
+VALUES ($1,$2,$3::jsonb,now(),now())
+ON CONFLICT (client_profile_id) DO UPDATE SET workspace_id=EXCLUDED.workspace_id, state_json=EXCLUDED.state_json, updated_at=EXCLUDED.updated_at`,
+		clientProfileID, workspaceID, string(data))
+	return err
+}
+
+func (s *PostgresStore) GetNativeState(ctx context.Context, workspaceID string, clientProfileID string) (nativeState, error) {
+	row := s.pool.QueryRow(ctx, `SELECT state_json FROM wa_client_profile_states WHERE workspace_id=$1 AND client_profile_id=$2`, workspaceID, clientProfileID)
+	var data []byte
+	if err := row.Scan(&data); err != nil {
+		return nativeState{}, err
+	}
+	return unmarshalNativeState(data)
 }
 
 func (s *PostgresStore) SaveAccountProbe(ctx context.Context, probe *waappv1.AccountProbe, workspaceID string) error {
@@ -331,6 +353,33 @@ func (s *PostgresStore) GetInboundMessage(ctx context.Context, workspaceID strin
 	return r.toProto(), nil
 }
 
+func (s *PostgresStore) ListPendingEncryptedInboundMessages(ctx context.Context, workspaceID string, waAccountIDValue string, clientProfileID string, limit int) ([]*waappv1.InboundMessage, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `SELECT m.message_id,m.message_session_id,m.kind,m.encryption_state,m.ack_status,m.sender_ref,m.payload_ref,m.last_error_code,m.last_error_message,m.last_error_retryable,m.received_at
+FROM wa_inbound_messages m
+JOIN wa_message_sessions s ON s.workspace_id=m.workspace_id AND s.message_session_id=m.message_session_id
+WHERE m.workspace_id=$1 AND s.wa_account_id=$2 AND s.client_profile_id=$3 AND m.encryption_state='MESSAGE_ENCRYPTION_STATE_ENCRYPTED' AND NOT EXISTS (
+  SELECT 1 FROM wa_decrypted_messages d WHERE d.workspace_id=m.workspace_id AND d.message_id=m.message_id
+)
+ORDER BY m.received_at ASC, m.message_id ASC
+LIMIT $4`, workspaceID, waAccountIDValue, clientProfileID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	messages := []*waappv1.InboundMessage{}
+	for rows.Next() {
+		var r messageRow
+		if err := rows.Scan(&r.id, &r.sessionID, &r.kind, &r.encryptionState, &r.ackStatus, &r.senderRef, &r.payloadRef, &r.errCode, &r.errMessage, &r.errRetryable, &r.receivedAt); err != nil {
+			return nil, err
+		}
+		messages = append(messages, r.toProto())
+	}
+	return messages, rows.Err()
+}
+
 func (s *PostgresStore) SaveDecryptedMessage(ctx context.Context, msg *waappv1.DecryptedMessage, workspaceID string) error {
 	appErr := errorFromProto(msg.GetLastError())
 	_, err := s.pool.Exec(ctx, `INSERT INTO wa_decrypted_messages (decrypted_message_id, workspace_id, message_id, status, plaintext_ref, plaintext_redacted, plaintext_secret_ref, last_error_code, last_error_message, last_error_retryable, decrypted_at)
@@ -361,6 +410,67 @@ ON CONFLICT (candidate_id) DO UPDATE SET confidence=EXCLUDED.confidence, redacte
 			candidate.GetCandidateId(), workspaceID, candidate.GetMessageId(), candidate.GetDecryptedMessageId(), candidate.GetKind().String(), candidate.GetText().GetRedactedValue(), candidate.GetText().GetSecretRef(), candidate.GetConfidence(), timeFromProto(candidate.GetExtractedAt()))
 	}
 	return s.pool.SendBatch(ctx, batch).Close()
+}
+
+func (s *PostgresStore) SaveOTPMessage(ctx context.Context, workspaceID string, msg *waappv1.OtpMessage) error {
+	if msg == nil {
+		return nil
+	}
+	otpValue := strings.TrimSpace(msg.GetOtp().GetValue())
+	if otpValue == "" {
+		otpValue = strings.TrimSpace(msg.GetOtp().GetRedactedValue())
+	}
+	if otpValue == "" {
+		return nil
+	}
+	source := msg.GetSource().String()
+	if source == "" || source == "WA_OTP_SOURCE_UNSPECIFIED" {
+		source = "WA_OTP_SOURCE_AUTO_EXTRACTION"
+	}
+	otpID := firstNonEmpty(msg.GetOtpMessageId(), stableOTPMessageID(workspaceID, msg.GetWaAccountId(), msg.GetSourceParty(), otpValue))
+	redactedValue := firstNonEmpty(msg.GetOtp().GetRedactedValue(), redacted(otpValue))
+	secretRef := firstNonEmpty(msg.GetOtp().GetSecretRef(), "wa-otp:"+stableID(otpID))
+	_, err := s.pool.Exec(ctx, `INSERT INTO wa_otp_messages (otp_message_id, workspace_id, wa_account_id, client_profile_id, registered_identity_id, message_id, candidate_id, source, source_party, otp_value, otp_redacted, otp_secret_ref, received_at, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now(),now())
+ON CONFLICT (otp_message_id) DO UPDATE SET client_profile_id=EXCLUDED.client_profile_id, registered_identity_id=EXCLUDED.registered_identity_id, message_id=EXCLUDED.message_id, candidate_id=EXCLUDED.candidate_id, source=EXCLUDED.source, source_party=EXCLUDED.source_party, otp_value=EXCLUDED.otp_value, otp_redacted=EXCLUDED.otp_redacted, otp_secret_ref=EXCLUDED.otp_secret_ref, received_at=EXCLUDED.received_at, updated_at=EXCLUDED.updated_at`,
+		otpID, workspaceID, msg.GetWaAccountId(), msg.GetClientProfileId(), msg.GetRegisteredIdentityId(), msg.GetMessageId(), msg.GetCandidateId(), source, msg.GetSourceParty(), otpValue, redactedValue, secretRef, timeFromProto(msg.GetReceivedAt()))
+	return err
+}
+
+func (s *PostgresStore) ListAccountOTPMessages(ctx context.Context, workspaceID string, waAccountIDValue string, cursorValue string, limit int, includeSensitiveValues bool) ([]*waappv1.OtpMessage, string, error) {
+	cursor, err := pagex.DecodeKeysetCursor(cursorValue)
+	if err != nil {
+		return nil, "", NewError(waappv1.WaErrorCode_WA_ERROR_CODE_VALIDATION_FAILED, err.Error(), false)
+	}
+	limit = pagex.NormalizePageLimit(limit)
+	rows, err := s.queryOTPMessagePage(ctx, workspaceID, waAccountIDValue, cursor, pagex.KeysetLookaheadLimit(limit))
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	items := []*waappv1.OtpMessage{}
+	for rows.Next() {
+		var r otpMessageRow
+		if err := rows.Scan(&r.id, &r.waAccountIDValue, &r.clientProfileID, &r.registeredIdentityID, &r.messageID, &r.candidateID, &r.source, &r.sourceParty, &r.otpValue, &r.otpRedacted, &r.otpSecretRef, &r.receivedAt, &r.createdAt, &r.updatedAt); err != nil {
+			return nil, "", err
+		}
+		items = append(items, r.toProto(includeSensitiveValues))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	page := pagex.NewKeysetPage(items, limit, func(msg *waappv1.OtpMessage) pagex.KeysetCursor {
+		return pagex.KeysetCursorValue(timeFromProto(msg.GetReceivedAt()), msg.GetOtpMessageId())
+	})
+	return page.Items, page.NextCursor, nil
+}
+
+func (s *PostgresStore) queryOTPMessagePage(ctx context.Context, workspaceID string, waAccountIDValue string, cursor pagex.KeysetCursor, limit int) (pgx.Rows, error) {
+	const base = `SELECT otp_message_id,wa_account_id,client_profile_id,registered_identity_id,message_id,candidate_id,source,source_party,otp_value,otp_redacted,otp_secret_ref,received_at,created_at,updated_at FROM wa_otp_messages WHERE workspace_id=$1 AND wa_account_id=$2`
+	if !pagex.HasKeysetCursor(cursor) {
+		return s.pool.Query(ctx, base+` ORDER BY received_at DESC, otp_message_id DESC LIMIT $3`, workspaceID, waAccountIDValue, limit)
+	}
+	return s.pool.Query(ctx, base+` AND (received_at, otp_message_id) < ($3, $4) ORDER BY received_at DESC, otp_message_id DESC LIMIT $5`, workspaceID, waAccountIDValue, cursor.UpdatedAt, cursor.ID, limit)
 }
 
 func notFound(err error, code waappv1.WaErrorCode, message string) error {

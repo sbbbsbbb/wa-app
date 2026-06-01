@@ -34,4 +34,5 @@ protoc -I "${PROTO_DIR}" -I "${COMMON_PROTO_DIR}" \
   --ts_proto_out="${OUT_DIR}" \
   --ts_proto_opt=onlyTypes=true,outputServices=none,esModuleInterop=true,useJsonWireFormat=true,snakeToCamel=false \
   --ts_proto_opt=Mbyte/v/forge/contracts/account/v1/account.proto=@byte-v-forge/common-ui/proto/byte/v/forge/contracts/account/v1/account \
+  --ts_proto_opt=Mbyte/v/forge/contracts/wa/v1/wa.proto=@byte-v-forge/common-ui/proto/byte/v/forge/contracts/wa/v1/wa \
   $(find "${PROTO_DIR}" -name '*.proto' | sort)

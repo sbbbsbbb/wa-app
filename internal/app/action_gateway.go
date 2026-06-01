@@ -18,6 +18,15 @@ import (
 )
 
 const transientStateTTL = 30 * time.Minute
+const registrationOTPWaitDefaultTTL = 10 * time.Minute
+
+type registrationOTPWait struct {
+	WorkspaceID           string `json:"workspace_id"`
+	WAAccountID           string `json:"wa_account_id"`
+	VerificationRequestID string `json:"verification_request_id"`
+	ResumeURL             string `json:"resume_url"`
+	CreatedAtUnix         int64  `json:"created_at_unix"`
+}
 
 type actionGateway struct{ server *Server }
 
@@ -48,7 +57,9 @@ func (g *actionGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "registration/request-sms-otp":
 		result, err = g.requestSMSOTP(r.Context(), payload)
 	case "registration/await-otp":
-		result, err = g.awaitOTP(payload)
+		result, err = g.awaitOTP(r.Context(), payload)
+	case "registration/resume-otp":
+		result, err = g.resumeOTP(r.Context(), payload)
 	case "registration/submit-otp":
 		result, err = g.submitOTP(r.Context(), payload)
 	case "registration/persist-login-state":
@@ -159,12 +170,149 @@ func (g *actionGateway) requestSMSOTP(ctx context.Context, payload map[string]an
 	}, nil
 }
 
-func (g *actionGateway) awaitOTP(payload map[string]any) (map[string]any, error) {
+func (g *actionGateway) awaitOTP(ctx context.Context, payload map[string]any) (map[string]any, error) {
+	wait, ttl, err := registrationOTPWaitFromPayload(payload)
+	if err != nil {
+		return nil, err
+	}
+	if err := g.saveRegistrationOTPWait(ctx, wait, ttl); err != nil {
+		return nil, err
+	}
 	return map[string]any{
-		"success":                 textField(payload, "verification_request_id") != "",
-		"verification_request_id": textField(payload, "verification_request_id"),
-		"timeout_seconds":         numberField(payload, "timeout_seconds"),
+		"success":                 true,
+		"wa_account_id":           wait.WAAccountID,
+		"verification_request_id": wait.VerificationRequestID,
+		"timeout_seconds":         int(ttl.Seconds()),
 	}, nil
+}
+
+func (g *actionGateway) resumeOTP(ctx context.Context, payload map[string]any) (map[string]any, error) {
+	code := firstNonEmpty(textField(payload, "otp"), textField(payload, "code"), textField(payload, "verification_code"))
+	if strings.TrimSpace(code) == "" {
+		return nil, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_VALIDATION_FAILED, "otp is required", false)
+	}
+	wait, err := g.loadRegistrationOTPWait(ctx, actionContext(payload).GetWorkspaceId(), textField(payload, "wa_account_id"), textField(payload, "verification_request_id"))
+	if err != nil {
+		return nil, err
+	}
+	if err := postRegistrationOTPResume(ctx, wait, code); err != nil {
+		return nil, err
+	}
+	_ = g.deleteRegistrationOTPWait(ctx, wait)
+	return map[string]any{"success": true, "wa_account_id": wait.WAAccountID, "verification_request_id": wait.VerificationRequestID}, nil
+}
+
+func registrationOTPWaitFromPayload(payload map[string]any) (registrationOTPWait, time.Duration, error) {
+	wait := registrationOTPWait{
+		WorkspaceID:           actionContext(payload).GetWorkspaceId(),
+		WAAccountID:           textField(payload, "wa_account_id"),
+		VerificationRequestID: textField(payload, "verification_request_id"),
+		ResumeURL:             textField(payload, "resume_url"),
+		CreatedAtUnix:         time.Now().UTC().Unix(),
+	}
+	if wait.VerificationRequestID == "" {
+		return registrationOTPWait{}, 0, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_VALIDATION_FAILED, "verification_request_id is required", false)
+	}
+	if wait.WAAccountID != "" {
+		accountID, err := requireWAAccountID(wait.WAAccountID)
+		if err != nil {
+			return registrationOTPWait{}, 0, err
+		}
+		wait.WAAccountID = accountID
+	}
+	if wait.ResumeURL == "" {
+		return registrationOTPWait{}, 0, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_VALIDATION_FAILED, "resume_url is required", false)
+	}
+	ttl := time.Duration(numberField(payload, "timeout_seconds")) * time.Second
+	if ttl <= 0 {
+		ttl = registrationOTPWaitDefaultTTL
+	}
+	return wait, ttl, nil
+}
+
+func (g *actionGateway) saveRegistrationOTPWait(ctx context.Context, wait registrationOTPWait, ttl time.Duration) error {
+	data, err := json.Marshal(wait)
+	if err != nil {
+		return err
+	}
+	if err := g.server.runtime.SaveTransientState(ctx, registrationOTPWaitKey(wait.WorkspaceID, wait.VerificationRequestID), data, ttl); err != nil {
+		return err
+	}
+	if wait.WAAccountID != "" {
+		if err := g.server.runtime.SaveTransientState(ctx, registrationOTPWaitAccountKey(wait.WorkspaceID, wait.WAAccountID), data, ttl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (g *actionGateway) loadRegistrationOTPWait(ctx context.Context, workspaceID string, waAccountIDValue string, verificationRequestID string) (registrationOTPWait, error) {
+	key := ""
+	if verificationRequestID != "" {
+		key = registrationOTPWaitKey(workspaceID, verificationRequestID)
+	} else if waAccountIDValue != "" {
+		accountID, err := requireWAAccountID(waAccountIDValue)
+		if err != nil {
+			return registrationOTPWait{}, err
+		}
+		key = registrationOTPWaitAccountKey(workspaceID, accountID)
+	}
+	if key == "" {
+		return registrationOTPWait{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_VALIDATION_FAILED, "wa_account_id or verification_request_id is required", false)
+	}
+	data, err := g.server.runtime.GetTransientState(ctx, key)
+	if err != nil {
+		return registrationOTPWait{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_PROFILE_NOT_FOUND, "registration otp wait not found", false)
+	}
+	var wait registrationOTPWait
+	if err := json.Unmarshal(data, &wait); err != nil {
+		return registrationOTPWait{}, err
+	}
+	return wait, nil
+}
+
+func (g *actionGateway) deleteRegistrationOTPWait(ctx context.Context, wait registrationOTPWait) error {
+	_ = g.server.runtime.DeleteTransientState(ctx, registrationOTPWaitKey(wait.WorkspaceID, wait.VerificationRequestID))
+	if wait.WAAccountID != "" {
+		_ = g.server.runtime.DeleteTransientState(ctx, registrationOTPWaitAccountKey(wait.WorkspaceID, wait.WAAccountID))
+	}
+	return nil
+}
+
+func postRegistrationOTPResume(ctx context.Context, wait registrationOTPWait, code string) error {
+	body, err := json.Marshal(map[string]any{
+		"otp":                     code,
+		"code":                    code,
+		"verification_code":       code,
+		"verification_request_id": wait.VerificationRequestID,
+		"otp_source":              "manual_frontend",
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, wait.ResumeURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("resume registration otp wait: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("resume registration otp wait returned HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func registrationOTPWaitKey(workspaceID string, verificationRequestID string) string {
+	return "wa-registration-otp-wait:verification:" + workspaceID + ":" + verificationRequestID
+}
+
+func registrationOTPWaitAccountKey(workspaceID string, waAccountIDValue string) string {
+	return "wa-registration-otp-wait:account:" + workspaceID + ":" + waAccountIDValue
 }
 
 func (g *actionGateway) submitOTP(ctx context.Context, payload map[string]any) (map[string]any, error) {
@@ -261,7 +409,7 @@ func (s *Server) commitNativeState(ctx context.Context, reqCtx *waappv1.RequestC
 	account, err := s.store.FindWAAccountByPhone(ctx, workspaceID, phone.GetE164Number())
 	if err != nil {
 		now := s.clock.Now()
-		account = newWAAccount(s.ids.NewID("waacc_"), workspaceID, phone, waappv1.WAAccountStatus_WA_ACCOUNT_STATUS_ACTIVE, &waappv1.AuditStamp{CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now)})
+		account = newWAAccount(s.ids.NewID("waacc_"), workspaceID, phone, waappv1.WAAccountStatus_WA_ACCOUNT_STATUS_PENDING_REGISTRATION, &waappv1.AuditStamp{CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now)})
 		account, err = s.saveWAAccount(ctx, workspaceID, account)
 		if err != nil {
 			return nil, nil, nil, err
@@ -278,7 +426,7 @@ func (s *Server) commitNativeState(ctx context.Context, reqCtx *waappv1.RequestC
 	}
 	state.CC = firstNonEmpty(state.CC, phoneCC(phone))
 	state.Phone = firstNonEmpty(state.Phone, phoneNational(phone))
-	if err := engine.saveState(profile.GetClientProfileId(), state); err != nil {
+	if err := engine.saveState(ctx, workspaceID, profile.GetClientProfileId(), state); err != nil {
 		profile.Status = waappv1.ClientProfileStatus_CLIENT_PROFILE_STATUS_REJECTED
 		profile.LastError = ToProtoError(err)
 		_ = s.store.SaveClientProfile(ctx, profile, workspaceID)

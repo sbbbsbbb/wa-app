@@ -88,7 +88,7 @@ func (s *Server) receiveMessageBatch(ctx context.Context, req *waappv1.ReceiveMe
 	if loginState, err := s.store.GetLoginStateByRegisteredIdentity(ctx, workspaceID, session.GetRegisteredIdentityId()); err == nil && loginState.GetStatus() == waappv1.LoginStateStatus_LOGIN_STATE_STATUS_ACTIVE {
 		loginState.LastVerifiedAt = timestamppb.New(now)
 		loginState.Audit.UpdatedAt = timestamppb.New(now)
-		_ = s.store.SaveLoginState(ctx, loginState, workspaceID, "native-profile:"+session.GetClientProfileId())
+		_ = s.store.SaveLoginState(ctx, loginState, workspaceID, "native-db:"+session.GetClientProfileId())
 	}
 	if err := s.store.SaveMessageSession(ctx, session, workspaceID); err != nil {
 		return &waappv1.ReceiveMessageBatchResponse{Session: session, Error: ToProtoError(err)}, nil

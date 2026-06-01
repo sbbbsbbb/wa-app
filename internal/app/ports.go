@@ -20,6 +20,8 @@ type Store interface {
 	ListWAAccounts(context.Context, string, string, int) ([]*waappv1.WAAccount, string, error)
 	SaveClientProfile(context.Context, *waappv1.ClientProfile, string) error
 	GetClientProfile(context.Context, string, string) (*waappv1.ClientProfile, error)
+	SaveNativeState(context.Context, string, string, nativeState) error
+	GetNativeState(context.Context, string, string) (nativeState, error)
 
 	SaveAccountProbe(context.Context, *waappv1.AccountProbe, string) error
 	SaveVerificationRequest(context.Context, *waappv1.VerificationCodeRequestRecord, string) error
@@ -37,9 +39,12 @@ type Store interface {
 	GetMessageSession(context.Context, string, string) (*waappv1.MessageSession, error)
 	SaveInboundMessages(context.Context, string, []*waappv1.InboundMessage) error
 	GetInboundMessage(context.Context, string, string) (*waappv1.InboundMessage, error)
+	ListPendingEncryptedInboundMessages(context.Context, string, string, string, int) ([]*waappv1.InboundMessage, error)
 	SaveDecryptedMessage(context.Context, *waappv1.DecryptedMessage, string) error
 	GetDecryptedMessage(context.Context, string, string) (*waappv1.DecryptedMessage, error)
 	SaveCandidates(context.Context, string, []*waappv1.ExtractedCandidate) error
+	SaveOTPMessage(context.Context, string, *waappv1.OtpMessage) error
+	ListAccountOTPMessages(context.Context, string, string, string, int, bool) ([]*waappv1.OtpMessage, string, error)
 }
 
 type RuntimeState interface {

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"time"
 
+	wav1 "github.com/byte-v-forge/common-lib/gen/go/byte/v/forge/contracts/wa/v1"
 	waappv1 "github.com/byte-v-forge/wa-app/gen/go/byte/v/forge/waapp/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -343,5 +344,45 @@ func (r decryptedRow) toProto() *waappv1.DecryptedMessage {
 		PlaintextText:      &waappv1.SensitiveText{RedactedValue: r.redacted, SecretRef: r.secretRef},
 		DecryptedAt:        timestamppb.New(r.decryptedAt.UTC()),
 		LastError:          protoError(r.errCode, r.errMessage, r.errRetryable),
+	}
+}
+
+type otpMessageRow struct {
+	id                   string
+	waAccountIDValue     string
+	clientProfileID      string
+	registeredIdentityID string
+	messageID            string
+	candidateID          string
+	source               string
+	sourceParty          string
+	otpValue             string
+	otpRedacted          string
+	otpSecretRef         string
+	receivedAt           time.Time
+	createdAt            time.Time
+	updatedAt            time.Time
+}
+
+func (r otpMessageRow) toProto(includeSensitiveValue bool) *waappv1.OtpMessage {
+	text := &waappv1.SensitiveText{
+		RedactedValue: r.otpRedacted,
+		SecretRef:     r.otpSecretRef,
+	}
+	if includeSensitiveValue {
+		text.Value = r.otpValue
+	}
+	return &waappv1.OtpMessage{
+		OtpMessageId:         r.id,
+		WaAccountId:          r.waAccountIDValue,
+		ClientProfileId:      r.clientProfileID,
+		RegisteredIdentityId: r.registeredIdentityID,
+		MessageId:            r.messageID,
+		CandidateId:          r.candidateID,
+		Source:               wav1.WaOtpSource(wav1.WaOtpSource_value[r.source]),
+		SourceParty:          r.sourceParty,
+		Otp:                  text,
+		ReceivedAt:           timestamppb.New(r.receivedAt.UTC()),
+		Audit:                audit(r.createdAt, r.updatedAt),
 	}
 }

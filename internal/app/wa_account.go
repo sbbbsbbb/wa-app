@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/byte-v-forge/common-lib/accountmodel"
+	accountv1 "github.com/byte-v-forge/common-lib/gen/go/byte/v/forge/contracts/account/v1"
 	waappv1 "github.com/byte-v-forge/wa-app/gen/go/byte/v/forge/waapp/v1"
 )
 
@@ -16,13 +17,36 @@ func newWAAccount(id string, workspaceID string, phone *waappv1.PhoneTarget, sta
 		Account: waAccountDescriptor.Account(
 			id,
 			accountmodel.WithPhoneIdentity(phone.GetE164Number(), phone.GetE164Number()),
-			accountmodel.WithStatus(accountmodel.StatusFromStringer(status, "WA_ACCOUNT_STATUS_")),
+			accountmodel.WithStatus(waAccountStatusModel(status)),
 			accountmodel.WithCreatedTimestamp(audit.GetCreatedAt()),
 			accountmodel.WithUpdatedTimestamp(audit.GetUpdatedAt()),
 		),
 		WorkspaceId: workspaceID,
 		Phone:       phone,
 	}
+}
+
+func waAccountStatusModel(status waappv1.WAAccountStatus) *accountv1.AccountStatus {
+	switch status {
+	case waappv1.WAAccountStatus_WA_ACCOUNT_STATUS_PENDING_REGISTRATION:
+		return accountmodel.Status("pending_registration", "待注册", nil)
+	case waappv1.WAAccountStatus_WA_ACCOUNT_STATUS_ACTIVE:
+		return accountmodel.Status("active", "已注册", nil)
+	case waappv1.WAAccountStatus_WA_ACCOUNT_STATUS_PAUSED:
+		return accountmodel.Status("paused", "暂停", nil)
+	case waappv1.WAAccountStatus_WA_ACCOUNT_STATUS_ARCHIVED:
+		return accountmodel.Status("archived", "归档", nil)
+	default:
+		return accountmodel.StatusFromStringer(status, "WA_ACCOUNT_STATUS_")
+	}
+}
+
+func withWAAccountStatus(account *waappv1.WAAccount, status waappv1.WAAccountStatus, updatedAt time.Time) *waappv1.WAAccount {
+	createdAt := waAccountCreatedAt(account)
+	if createdAt.IsZero() {
+		createdAt = updatedAt
+	}
+	return newWAAccount(waAccountID(account), account.GetWorkspaceId(), account.GetPhone(), status, audit(createdAt, updatedAt))
 }
 
 func waAccountID(account *waappv1.WAAccount) string {
