@@ -9,6 +9,7 @@ import {
   accountSubjectRenderConfig,
   accountId,
   deleteAccountCarrier,
+  useAccountProbeAction,
   useAccountPages,
   useAsyncActionRunner,
   useQuery,
@@ -40,29 +41,23 @@ const ACCOUNT_WORKSPACE_ID = 'default';
 export function WaPage() {
   const toast = useToastMessage();
   const health = useQuery({ queryKey: waKeys.health, queryFn: getWaHealth });
-  const [checkedPhone, setCheckedPhone] = useState('');
-  const [result, setResult] = useState<WaWorkflowResponse | null>(null);
-  const runner = useAsyncActionRunner();
   const accounts = useAccountPages<WaAccountProjection, ListWAAccountsResponse>({
     queryKey: waKeys.accounts(ACCOUNT_WORKSPACE_ID),
     queryFn: (cursor) => getWaAccounts(ACCOUNT_WORKSPACE_ID, cursor),
     refetchInterval: 10000,
     pageSize: ACCOUNT_PAGE_SIZE
   });
-
-  async function probePhoneSMS(target: WaResolvedPhone) {
-    setCheckedPhone(target.e164);
-    setResult(null);
-    await runner.tryRun('wa-phone-sms-probe', async () => {
-      const output = await probeWaPhoneSMS(target.input);
-      setResult(output);
-      toast.showOK('手机号/SMS 探测完成');
-    }, { onError: toast.showError });
-  }
+  const phoneProbe = useAccountProbeAction<WaResolvedPhone, WaWorkflowResponse>({
+    actionKey: 'wa-phone-sms-probe',
+    subjectOf: (target) => target.e164,
+    probe: (target) => probeWaPhoneSMS(target.input),
+    onSuccess: () => toast.showOK('手机号/SMS 探测完成'),
+    onError: toast.showError,
+  });
 
   return <><ToastMessage toast={toast.toast} /><WorkspaceTabbedPanel<WaTab> defaultValue="accounts" title={<span className="inline-flex items-center gap-2"><Smartphone className="size-4" />WA 管理</span>} meta={`${accounts.accounts.length} 个账号 · ${health.data?.n8n_webhook_configured ? 'n8n 已接入' : '等待 n8n'}`} tabs={[
     { value: 'accounts', label: '账号', content: <WaAccountsTab accounts={accounts.accounts} loading={accounts.isLoading} pagination={accounts.pagination} onAccountsChanged={async () => { await accounts.refetch(); }} onAccountAdded={async () => { toast.showOK('WAAccount 已添加'); await accounts.refetch(); }} onActionDone={toast.showOK} onError={toast.showError} /> },
-    { value: 'toolbox', label: '工具箱', content: <ToolboxTab result={result} phone={checkedPhone} busy={runner.busy} onCheck={probePhoneSMS} onError={toast.showError} /> },
+    { value: 'toolbox', label: '工具箱', content: <ToolboxTab result={phoneProbe.result} phone={phoneProbe.subject} busy={phoneProbe.busy} onCheck={phoneProbe.run} onError={toast.showError} /> },
     { value: 'workflows', label: '工作流', content: <WorkflowTab configured={Boolean(health.data?.n8n_webhook_configured)} workflows={health.data?.workflows || []} loading={health.isLoading} /> }
   ]} /></>;
 }
