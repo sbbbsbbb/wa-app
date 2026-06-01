@@ -6,15 +6,16 @@ import {
   ToastMessage,
   WorkflowStatusPanel,
   WorkspaceTabbedPanel,
+  accountCarrierID,
   accountSubjectRenderConfig,
-  accountId,
   deleteAccountCarrier,
+  useAccountActionRunner,
+  useAccountManagementController,
   useAccountProbeAction,
-  useAccountPages,
-  useAsyncActionRunner,
   useQuery,
   useToastMessage,
   type AccountListPagination,
+  type AccountManagementControllerOptions,
 } from '@byte-v-forge/common-ui';
 import type { ListWAAccountsResponse } from '../proto/byte/v/forge/waapp/v1/profile';
 import {
@@ -37,16 +38,18 @@ import type { WaResolvedPhone } from './wa-utils';
 type WaTab = 'accounts' | 'toolbox' | 'workflows';
 
 const ACCOUNT_WORKSPACE_ID = 'default';
+const waAccountControllerOptions = {
+  queryKey: waKeys.accounts(ACCOUNT_WORKSPACE_ID),
+  queryFn: (cursor) => getWaAccounts(ACCOUNT_WORKSPACE_ID, cursor),
+  refetchInterval: 10000,
+  pageSize: ACCOUNT_PAGE_SIZE,
+  clearMissingSelection: true,
+} satisfies AccountManagementControllerOptions<WaAccountProjection, ListWAAccountsResponse>;
 
 export function WaPage() {
   const toast = useToastMessage();
   const health = useQuery({ queryKey: waKeys.health, queryFn: getWaHealth });
-  const accounts = useAccountPages<WaAccountProjection, ListWAAccountsResponse>({
-    queryKey: waKeys.accounts(ACCOUNT_WORKSPACE_ID),
-    queryFn: (cursor) => getWaAccounts(ACCOUNT_WORKSPACE_ID, cursor),
-    refetchInterval: 10000,
-    pageSize: ACCOUNT_PAGE_SIZE
-  });
+  const accounts = useAccountManagementController<WaAccountProjection, ListWAAccountsResponse>(waAccountControllerOptions);
   const phoneProbe = useAccountProbeAction<WaResolvedPhone, WaWorkflowResponse>({
     actionKey: 'wa-phone-sms-probe',
     subjectOf: (target) => target.e164,
@@ -56,7 +59,7 @@ export function WaPage() {
   });
 
   return <><ToastMessage toast={toast.toast} /><WorkspaceTabbedPanel<WaTab> defaultValue="accounts" title={<span className="inline-flex items-center gap-2"><Smartphone className="size-4" />WA 管理</span>} meta={`${accounts.accounts.length} 个账号 · ${health.data?.n8n_webhook_configured ? 'n8n 已接入' : '等待 n8n'}`} tabs={[
-    { value: 'accounts', label: '账号', content: <WaAccountsTab accounts={accounts.accounts} loading={accounts.isLoading} pagination={accounts.pagination} onAccountsChanged={async () => { await accounts.refetch(); }} onAccountAdded={async () => { toast.showOK('WAAccount 已添加'); await accounts.refetch(); }} onActionDone={toast.showOK} onError={toast.showError} /> },
+    { value: 'accounts', label: '账号', content: <WaAccountsTab controller={accounts} onAccountAdded={async () => { toast.showOK('WAAccount 已添加'); await accounts.invalidate(); }} onActionDone={toast.showOK} onError={toast.showError} /> },
     { value: 'toolbox', label: '工具箱', content: <ToolboxTab result={phoneProbe.result} phone={phoneProbe.subject} busy={phoneProbe.busy} onCheck={phoneProbe.run} onError={toast.showError} /> },
     { value: 'workflows', label: '工作流', content: <WorkflowTab configured={Boolean(health.data?.n8n_webhook_configured)} workflows={health.data?.workflows || []} loading={health.isLoading} /> }
   ]} /></>;
@@ -67,31 +70,42 @@ function ToolboxTab(props: { result: WaWorkflowResponse | null; phone: string; b
   return <div className="p-3"><WaPhoneSMSProbeForm disabled={props.busy} resultSlot={hasResult ? <WaResultPanel title="探测结果" phone={props.phone} result={props.result} loading={props.busy} /> : undefined} onCheck={props.onCheck} onError={props.onError} /></div>;
 }
 
-function WaAccountsTab(props: { accounts: WaAccountProjection[]; loading?: boolean; pagination?: AccountListPagination; onAccountsChanged: () => void | Promise<void>; onAccountAdded: () => void | Promise<void>; onActionDone: (message: string) => void; onError: (message: unknown) => void }) {
-  const [selected, setSelected] = useState<WaAccountProjection | null>(null);
+type WaAccountController = {
+  accounts: WaAccountProjection[];
+  selectedID: string;
+  selected: WaAccountProjection | null;
+  isLoading: boolean;
+  actionBusy: boolean;
+  accountsPagination?: AccountListPagination;
+  invalidate: () => Promise<void>;
+  selectAccount: (account: WaAccountProjection) => void;
+  clearSelection: () => void;
+};
+
+function WaAccountsTab(props: { controller: WaAccountController; onAccountAdded: () => void | Promise<void>; onActionDone: (message: string) => void; onError: (message: unknown) => void }) {
   const [actionResult, setActionResult] = useState<WaAccountActionResult | null>(null);
-  const runner = useAsyncActionRunner();
-  const selectedAccount = selected?.account || null;
+  const runner = useAccountActionRunner();
+  const busy = props.controller.isLoading || props.controller.actionBusy || runner.busy;
   const renderConfig = accountSubjectRenderConfig({ icon: () => <Smartphone size={15} /> });
   async function deleteAccount(account: WaAccountProjection) {
-    const accountID = account.account?.key?.account_id || '';
-    await runner.tryRun(`wa-delete:${accountID}`, async () => {
+    const accountID = accountCarrierID(account);
+    await runner.tryRunAccountAction('wa-delete', account, async () => {
       const deleted = await deleteAccountCarrier(account, {
         deleteByID: () => deleteWaAccount(account, ACCOUNT_WORKSPACE_ID),
         confirmMessage: () => `删除 WAAccount ${accountID}？`,
         invalidate: async () => {
-          setSelected(null);
-          await props.onAccountsChanged();
+          props.controller.clearSelection();
+          await props.controller.invalidate();
         },
       });
       if (deleted) props.onActionDone('WAAccount 已删除');
     }, { onError: props.onError });
   }
-  return <AccountManagementDrawerView title="WAAccount" icon={<Smartphone size={16} />} actions={<WaAccountAdd disabled={props.loading} onCreated={props.onAccountAdded} onError={props.onError} />} carriers={props.accounts} selectedCarrier={selected} selectedID={selectedAccount ? accountId(selectedAccount) : undefined} onSelectCarrier={setSelected} loading={props.loading} loadingText="加载 WAAccount..." emptyText="暂无已持久化 WAAccount" pagination={props.pagination} config={renderConfig} drawerDescription="WA 账号详情" detailTabs={waAccountDetailTabs({ actionResult, busy: runner.busy, onRegister: (account) => runWAAccountAction('register', account, runner, setActionResult, props), onProbe: (account) => runWAAccountAction('probe', account, runner, setActionResult, props), onDelete: deleteAccount, onManualOTPDone: props.onActionDone, onError: props.onError })} onCloseDetails={() => setSelected(null)} />;
+  return <AccountManagementDrawerView title="WAAccount" icon={<Smartphone size={16} />} actions={<WaAccountAdd disabled={busy} onCreated={props.onAccountAdded} onError={props.onError} />} carriers={props.controller.accounts} selectedCarrier={props.controller.selected} selectedID={props.controller.selectedID} onSelectCarrier={props.controller.selectAccount} loading={props.controller.isLoading} loadingText="加载 WAAccount..." emptyText="暂无已持久化 WAAccount" pagination={props.controller.accountsPagination} config={renderConfig} drawerDescription="WA 账号详情" detailTabs={waAccountDetailTabs({ actionResult, busy, onRegister: (account) => runWAAccountAction('register', account, runner, setActionResult, { ...props, onAccountsChanged: props.controller.invalidate }), onProbe: (account) => runWAAccountAction('probe', account, runner, setActionResult, { ...props, onAccountsChanged: props.controller.invalidate }), onDelete: deleteAccount, onManualOTPDone: props.onActionDone, onError: props.onError })} onCloseDetails={props.controller.clearSelection} />;
 }
 
 type WaAccountActionKind = WaAccountActionResult['kind'];
-type WaAccountRunner = ReturnType<typeof useAsyncActionRunner>;
+type WaAccountRunner = ReturnType<typeof useAccountActionRunner>;
 type WaAccountActionCallbacks = {
   onAccountsChanged: () => void | Promise<void>;
   onActionDone: (message: string) => void;
@@ -99,9 +113,9 @@ type WaAccountActionCallbacks = {
 };
 
 async function runWAAccountAction(kind: WaAccountActionKind, account: WaAccountProjection, runner: WaAccountRunner, setActionResult: (value: WaAccountActionResult | null) => void, callbacks: WaAccountActionCallbacks) {
-  const accountID = account.account?.key?.account_id || '';
+  const accountID = accountCarrierID(account);
   const phone = account.phone?.e164_number || '';
-  await runner.tryRun(`wa-${kind}:${accountID}`, async () => {
+  await runner.tryRunAccountAction(`wa-${kind}`, account, async () => {
     const result = kind === 'register' ? await registerWaAccount(account) : await probeWaAccount(account);
     setActionResult({ accountID, kind, phone, result });
     const error = waAccountActionError(kind, result);
