@@ -2,6 +2,7 @@ import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import type { WaPhoneInput, WaWorkflowResponse } from './wa-api';
 
 const DEFAULT_WORKSPACE_ID = 'default';
+const PHONE_NOT_POSSIBLE_MESSAGE = '手机号位数不符合国家规则，请检查国家拨号码和手机号。';
 
 export type WaResolvedPhone = {
   e164: string;
@@ -23,6 +24,9 @@ export function resolveWaPhoneTarget(value: string, countryCallingCode = ''): Wa
   }
   if (phone.countryCallingCode !== callingCode) {
     return { target: null, error: `手机号与拨号码不一致：号码为 +${phone.countryCallingCode}，拨号码为 +${callingCode}。` };
+  }
+  if (!phone.isPossible()) {
+    return { target: null, error: PHONE_NOT_POSSIBLE_MESSAGE };
   }
   const e164 = phone.number;
   const countryCode = phone.country || '';

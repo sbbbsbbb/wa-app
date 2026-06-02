@@ -484,6 +484,8 @@ type normalizedPhone struct {
 	countryISO2    string
 }
 
+const phoneNotPossibleMessage = "手机号位数不符合国家规则，请检查国家拨号码和手机号。"
+
 func normalizePhonePayload(payload map[string]any) (normalizedPhone, error) {
 	phoneObj := objectField(payload, "phone")
 	rawNumber := firstNonEmpty(textField(payload, "e164_number"), textField(phoneObj, "e164_number"), textField(payload, "phone"), textField(payload, "phone_number"), textField(payload, "number"), textField(payload, "national_number"), textField(phoneObj, "national_number"))
@@ -507,11 +509,11 @@ func normalizePhonePayload(payload map[string]any) (normalizedPhone, error) {
 	if err != nil {
 		return normalizedPhone{}, fmt.Errorf("phone parse failed: %w", err)
 	}
-	if !phonenumbers.IsPossibleNumber(parsed) {
-		return normalizedPhone{}, fmt.Errorf("phone is not possible")
-	}
 	if fmt.Sprint(parsed.GetCountryCode()) != callingCode {
 		return normalizedPhone{}, fmt.Errorf("phone country calling code does not match country_calling_code")
+	}
+	if !phonenumbers.IsPossibleNumber(parsed) {
+		return normalizedPhone{}, errors.New(phoneNotPossibleMessage)
 	}
 	region := strings.ToUpper(firstNonEmpty(phonenumbers.GetRegionCodeForNumber(parsed), textField(payload, "country_iso2"), textField(phoneObj, "country_iso2")))
 	return normalizedPhone{
