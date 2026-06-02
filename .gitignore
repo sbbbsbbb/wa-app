@@ -15,3 +15,5 @@ dist/
 build/
 coverage/
 .wrangler/
+/gen/
+/webui/src/proto/

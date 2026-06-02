@@ -20,7 +20,7 @@
   },
   "scripts": {
     "proto": "../scripts/generate-web-proto.sh",
-    "build": "vite build",
+    "build": "npm run proto && vite build",
     "lint": "eslint . && tsc --noEmit"
   },
   "dependencies": {
