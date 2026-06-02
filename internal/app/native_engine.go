@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -19,6 +20,8 @@ const (
 	defaultWARegisterURL  = "https://y9yrsygcg6.execute-api.us-east-1.amazonaws.com/s/s?_=/v2/register&"
 	defaultNativeHTTPHost = "v.whatsapp.net"
 )
+
+var nativeSensitiveDigitsPattern = regexp.MustCompile(`\b[0-9]{4,8}\b`)
 
 type NativeEngine struct {
 	stateStore     Store
@@ -387,12 +390,23 @@ func (e *NativeEngine) registerParams(phone *waappv1.PhoneTarget, code string, s
 	if token := e.registrationToken(phone, state); token != "" {
 		params["token"] = token
 	}
+	applyRegisterCodeResultParams(params, state)
 	raw := map[string]struct{}{"id": {}, "backup_token": {}}
 	for key, value := range registerVerificationMap(state, params["method"]) {
 		params[key] = pctBytes([]byte(value))
 		raw[key] = struct{}{}
 	}
 	return params, raw
+}
+
+func applyRegisterCodeResultParams(params map[string]string, state nativeState) {
+	for _, key := range []string{"auth_response", "context", "advertising_id", "login", "type"} {
+		value := jsonString(state.LastCodeResult[key])
+		if value == "" {
+			continue
+		}
+		params[key] = value
+	}
 }
 
 func (e *NativeEngine) loadState(ctx context.Context, workspaceID string, clientProfileID string) (nativeState, error) {
@@ -419,6 +433,10 @@ func sanitizeResponse(data map[string]any) map[string]any {
 			out[key] = "<redacted>"
 			continue
 		}
+		if lower == "response_text" {
+			out[key] = safeResponseSnippet(jsonString(value))
+			continue
+		}
 		out[key] = value
 	}
 	return out
@@ -434,7 +452,7 @@ func classifyHTTPError(data map[string]any, err error) error {
 	case "blocked", "rejected":
 		return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_REJECTED, "request was rejected", false)
 	}
-	return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_REJECTED, err.Error(), true)
+	return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_REJECTED, upstreamFailureMessage(data, err), true)
 }
 
 func jsonString(value any) string {
@@ -442,6 +460,40 @@ func jsonString(value any) string {
 		return s
 	}
 	return ""
+}
+
+func upstreamFailureMessage(data map[string]any, err error) string {
+	if statusCode := jsonNumber(data["status_code"]); statusCode > 0 {
+		if snippet := safeResponseSnippet(jsonString(data["response_text"])); snippet != "" {
+			return fmt.Sprintf("wasafe upstream http %d: %s", statusCode, snippet)
+		}
+		return fmt.Sprintf("wasafe upstream http %d", statusCode)
+	}
+	return err.Error()
+}
+
+func safeResponseSnippet(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return ""
+	}
+	text = nativeSensitiveDigitsPattern.ReplaceAllString(text, "<digits>")
+	for _, marker := range []string{"token", "auth", "key", "code", "sig"} {
+		if strings.Contains(strings.ToLower(text), marker) {
+			return "<redacted>"
+		}
+	}
+	if utf8.RuneCountInString(text) <= 160 {
+		return text
+	}
+	out := make([]rune, 0, 160)
+	for _, ch := range text {
+		if len(out) >= 160 {
+			break
+		}
+		out = append(out, ch)
+	}
+	return string(out) + "..."
 }
 
 func jsonNumber(value any) int {

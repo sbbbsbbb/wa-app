@@ -206,7 +206,7 @@ func newNativeState(phone *waappv1.PhoneTarget, appVersion string) (nativeState,
 		CC:            phoneCC(phone),
 		Phone:         phoneNational(phone),
 		AuthKey:       chatStatic.Public,
-		UserAgent:     nativeUserAgent(appVersion),
+		UserAgent:     firstNonEmpty(profile.UserAgent, nativeUserAgent(appVersion)),
 		Profile:       profile,
 		ChatStatic:    chatStatic,
 		Signal: nativeSignalState{
@@ -411,7 +411,7 @@ func renderNativePlain(params map[string]string, rawKeys map[string]struct{}) st
 }
 
 func stableParamOrder(params map[string]string) []string {
-	preferred := []string{"cc", "in", "method", "lg", "lc", "fdid", "expid", "access_session_id", "id", "backup_token", "code", "token", "authkey", "e_ident", "e_keytype", "e_regid", "e_skey_id", "e_skey_val", "e_skey_sig"}
+	preferred := []string{"cc", "in", "method", "lg", "lc", "fdid", "expid", "access_session_id", "id", "backup_token", "code", "auth_response", "context", "advertising_id", "login", "type", "token", "authkey", "e_ident", "e_keytype", "e_regid", "e_skey_id", "e_skey_val", "e_skey_sig"}
 	seen := map[string]struct{}{}
 	out := []string{}
 	for _, key := range preferred {
