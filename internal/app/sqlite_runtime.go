@@ -117,6 +117,65 @@ func (r *SQLiteRuntime) DeleteTransientState(ctx context.Context, ref string) er
 	return r.delete(ctx, "transient", ref)
 }
 
+func (r *SQLiteRuntime) ClaimLease(ctx context.Context, key string, holder string, ttl time.Duration) (bool, error) {
+	key = strings.TrimSpace(key)
+	holder = strings.TrimSpace(holder)
+	if key == "" || holder == "" {
+		return true, nil
+	}
+	now := time.Now().UTC()
+	if err := r.cleanup(ctx, now); err != nil {
+		return false, err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var current []byte
+	var expiresAt int64
+	err = tx.QueryRowContext(ctx, `SELECT value,expires_at FROM wa_sqlite_runtime_state WHERE kind=? AND key=?`, "lease", key).Scan(&current, &expiresAt)
+	switch {
+	case err == nil && string(current) != holder && expiresAt > sqliteTimeValue(now):
+		return false, tx.Commit()
+	case err != nil && err != sql.ErrNoRows:
+		return false, err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO wa_sqlite_runtime_state (kind,key,value,expires_at) VALUES (?,?,?,?)
+ON CONFLICT(kind,key) DO UPDATE SET value=excluded.value, expires_at=excluded.expires_at`, "lease", key, []byte(holder), sqliteTimeValue(now.Add(normalizeLeaseTTL(ttl))))
+	if err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+func (r *SQLiteRuntime) RenewLease(ctx context.Context, key string, holder string, ttl time.Duration) (bool, error) {
+	key = strings.TrimSpace(key)
+	holder = strings.TrimSpace(holder)
+	if key == "" || holder == "" {
+		return true, nil
+	}
+	now := time.Now().UTC()
+	result, err := r.db.ExecContext(ctx, `UPDATE wa_sqlite_runtime_state
+SET expires_at=?
+WHERE kind=? AND key=? AND value=? AND expires_at>?`, sqliteTimeValue(now.Add(normalizeLeaseTTL(ttl))), "lease", key, []byte(holder), sqliteTimeValue(now))
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed > 0, err
+}
+
+func (r *SQLiteRuntime) ReleaseLease(ctx context.Context, key string, holder string) error {
+	key = strings.TrimSpace(key)
+	holder = strings.TrimSpace(holder)
+	if key == "" || holder == "" {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx, `DELETE FROM wa_sqlite_runtime_state WHERE kind=? AND key=? AND value=?`, "lease", key, []byte(holder))
+	return err
+}
+
 func (r *SQLiteRuntime) OpenSessionLease(ctx context.Context, sessionID string, ttl time.Duration) error {
 	if strings.TrimSpace(sessionID) == "" {
 		return nil

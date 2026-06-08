@@ -79,6 +79,55 @@ func (r *RedisRuntime) DeleteTransientState(ctx context.Context, ref string) err
 	return r.client.Del(ctx, redisKey("transient-state", ref)).Err()
 }
 
+func (r *RedisRuntime) ClaimLease(ctx context.Context, key string, holder string, ttl time.Duration) (bool, error) {
+	key = strings.TrimSpace(key)
+	holder = strings.TrimSpace(holder)
+	if key == "" || holder == "" {
+		return true, nil
+	}
+	ttl = normalizeLeaseTTL(ttl)
+	result, err := r.client.Eval(ctx, `
+local current = redis.call("GET", KEYS[1])
+if not current or current == ARGV[1] then
+  redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[2])
+  return 1
+end
+return 0
+`, []string{redisKey("lease", key)}, holder, leaseTTLMilliseconds(ttl)).Int()
+	return result == 1, err
+}
+
+func (r *RedisRuntime) RenewLease(ctx context.Context, key string, holder string, ttl time.Duration) (bool, error) {
+	key = strings.TrimSpace(key)
+	holder = strings.TrimSpace(holder)
+	if key == "" || holder == "" {
+		return true, nil
+	}
+	ttl = normalizeLeaseTTL(ttl)
+	result, err := r.client.Eval(ctx, `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  redis.call("PEXPIRE", KEYS[1], ARGV[2])
+  return 1
+end
+return 0
+`, []string{redisKey("lease", key)}, holder, leaseTTLMilliseconds(ttl)).Int()
+	return result == 1, err
+}
+
+func (r *RedisRuntime) ReleaseLease(ctx context.Context, key string, holder string) error {
+	key = strings.TrimSpace(key)
+	holder = strings.TrimSpace(holder)
+	if key == "" || holder == "" {
+		return nil
+	}
+	return r.client.Eval(ctx, `
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+end
+return 0
+`, []string{redisKey("lease", key)}, holder).Err()
+}
+
 func (r *RedisRuntime) OpenSessionLease(ctx context.Context, sessionID string, ttl time.Duration) error {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
