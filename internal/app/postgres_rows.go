@@ -426,6 +426,10 @@ type contactRow struct {
 	messageCount     int64
 	unreadCount      int64
 	lastMessageAt    sql.NullTime
+	lastPlaintext    string
+	lastRedacted     string
+	lastPayloadRef   string
+	lastEncryption   string
 }
 
 func (r contactRow) toProto() *waappv1.WAContact {
@@ -447,5 +451,11 @@ func (r contactRow) toProto() *waappv1.WAContact {
 		MessageCount:     int32(r.messageCount),
 		UnreadCount:      int32(r.unreadCount),
 		LastMessageAt:    sqlTime(r.lastMessageAt),
+		LastMessagePreview: contactMessagePreview(
+			r.lastPlaintext,
+			r.lastRedacted,
+			r.lastPayloadRef,
+			waappv1.MessageEncryptionState(waappv1.MessageEncryptionState_value[r.lastEncryption]),
+		),
 	}
 }

@@ -80,6 +80,19 @@ func scanSQLiteAccountMessage(rows sqlRows) (*waappv1.InboundMessage, *waappv1.D
 	if err := rows.Scan(&messagePayload, &decryptedPayload); err != nil {
 		return nil, nil, err
 	}
+	return scanSQLiteAccountMessagePayloads(messagePayload, decryptedPayload)
+}
+
+func scanSQLiteAccountMessageRow(row interface{ Scan(dest ...any) error }) (*waappv1.InboundMessage, *waappv1.DecryptedMessage, error) {
+	var messagePayload string
+	var decryptedPayload string
+	if err := row.Scan(&messagePayload, &decryptedPayload); err != nil {
+		return nil, nil, err
+	}
+	return scanSQLiteAccountMessagePayloads(messagePayload, decryptedPayload)
+}
+
+func scanSQLiteAccountMessagePayloads(messagePayload string, decryptedPayload string) (*waappv1.InboundMessage, *waappv1.DecryptedMessage, error) {
 	message := &waappv1.InboundMessage{}
 	if err := sqliteUnmarshal([]byte(messagePayload), message); err != nil {
 		return nil, nil, err

@@ -25,6 +25,7 @@ export type WaContact = {
   kind: WAContactKind;
   count: number;
   unreadCount: number;
+  preview: string;
   lastAt?: Date;
   profilePictureURL?: string;
   statsFromRecord?: boolean;
@@ -41,7 +42,7 @@ export function buildWaContacts(events: WaChatEvent[], records: WAContactRecord[
   for (const record of records) {
     const id = recordContactID(record);
     if (!id) continue;
-    contacts.set(id, { id, title: recordTitle(record), subtitle: recordSubtitle(record), kind: record.kind || WAContactKind.WA_CONTACT_KIND_UNSPECIFIED, count: record.message_count || 0, unreadCount: record.unread_count || 0, lastAt: parseDate(record.last_message_at) || parseDate(record.audit?.updated_at), profilePictureURL: contactProfilePictureURL(record), statsFromRecord: true });
+    contacts.set(id, { id, title: recordTitle(record), subtitle: recordSubtitle(record), kind: record.kind || WAContactKind.WA_CONTACT_KIND_UNSPECIFIED, count: record.message_count || 0, unreadCount: record.unread_count || 0, preview: record.last_message_preview || '', lastAt: parseDate(record.last_message_at) || parseDate(record.audit?.updated_at), profilePictureURL: contactProfilePictureURL(record), statsFromRecord: true });
   }
   for (const event of events) {
     const current = contacts.get(event.contactID);
@@ -53,6 +54,7 @@ export function buildWaContacts(events: WaChatEvent[], records: WAContactRecord[
       kind: current?.kind || WAContactKind.WA_CONTACT_KIND_UNSPECIFIED,
       count: keepRecordStats ? current?.count || 0 : (current?.count || 0) + 1,
       unreadCount: keepRecordStats ? current?.unreadCount || 0 : (current?.unreadCount || 0) + (isUnreadChatEvent(event) ? 1 : 0),
+      preview: current?.preview || event.text,
       lastAt: newerDate(current?.lastAt, event.at),
       profilePictureURL: current?.profilePictureURL,
       statsFromRecord: keepRecordStats,

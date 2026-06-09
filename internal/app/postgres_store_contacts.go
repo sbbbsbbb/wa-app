@@ -154,7 +154,7 @@ func (s *PostgresStore) queryContactPage(ctx context.Context, waAccountIDValue s
 	return s.pool.Query(ctx, contactSelectSQL+` WHERE c.wa_account_id=$1 AND (COALESCE(stats.last_message_at,c.updated_at), c.contact_id) < ($2, $3) ORDER BY COALESCE(stats.last_message_at,c.updated_at) DESC, c.contact_id DESC LIMIT $4`, waAccountIDValue, cursor.UpdatedAt, cursor.ID, limit)
 }
 
-const contactSelectSQL = `SELECT c.contact_id,c.wa_account_id,c.jid,c.number,c.display_name,c.wa_name,c.verified_name,c.profile_picture_id,c.kind,c.is_whatsapp_user,c.is_reachable,c.created_at,c.updated_at,COALESCE(stats.message_count,0),COALESCE(stats.unread_count,0),stats.last_message_at
+const contactSelectSQL = `SELECT c.contact_id,c.wa_account_id,c.jid,c.number,c.display_name,c.wa_name,c.verified_name,c.profile_picture_id,c.kind,c.is_whatsapp_user,c.is_reachable,c.created_at,c.updated_at,COALESCE(stats.message_count,0),COALESCE(stats.unread_count,0),stats.last_message_at,COALESCE(latest.plaintext_value,''),COALESCE(latest.plaintext_redacted,''),COALESCE(latest.payload_ref,''),COALESCE(latest.encryption_state,'')
 FROM wa_contacts c
 LEFT JOIN LATERAL (
   SELECT COUNT(*) AS message_count,
@@ -166,12 +166,30 @@ LEFT JOIN LATERAL (
     AND m.kind='INBOUND_MESSAGE_KIND_MESSAGE'
     AND COALESCE(NULLIF(m.contact_ref,''), m.sender_ref) IN (c.jid, c.number, CASE WHEN c.number<>'' THEN c.number || '@s.whatsapp.net' ELSE '' END)
     AND COALESCE(m.delete_status,'MESSAGE_DELETE_STATUS_NOT_DELETED')<>'MESSAGE_DELETE_STATUS_DELETED_FOR_ME'
-) stats ON true`
+) stats ON true
+LEFT JOIN LATERAL (
+  SELECT d.plaintext_value,d.plaintext_redacted,m.payload_ref,m.encryption_state
+  FROM wa_inbound_messages m
+  JOIN wa_message_sessions ms ON ms.message_session_id=m.message_session_id
+  LEFT JOIN LATERAL (
+    SELECT plaintext_value,plaintext_redacted
+    FROM wa_decrypted_messages
+    WHERE message_id=m.message_id
+    ORDER BY decrypted_at DESC, decrypted_message_id DESC
+    LIMIT 1
+  ) d ON true
+  WHERE ms.wa_account_id=c.wa_account_id
+    AND m.kind='INBOUND_MESSAGE_KIND_MESSAGE'
+    AND COALESCE(NULLIF(m.contact_ref,''), m.sender_ref) IN (c.jid, c.number, CASE WHEN c.number<>'' THEN c.number || '@s.whatsapp.net' ELSE '' END)
+    AND COALESCE(m.delete_status,'MESSAGE_DELETE_STATUS_NOT_DELETED')<>'MESSAGE_DELETE_STATUS_DELETED_FOR_ME'
+  ORDER BY m.received_at DESC, m.message_id DESC
+  LIMIT 1
+) latest ON true`
 
 type contactScanner interface {
 	Scan(...any) error
 }
 
 func scanContactRow(scanner contactScanner, r *contactRow) error {
-	return scanner.Scan(&r.id, &r.waAccountIDValue, &r.jid, &r.number, &r.displayName, &r.waName, &r.verifiedName, &r.profilePictureID, &r.kind, &r.isWhatsAppUser, &r.isReachable, &r.createdAt, &r.updatedAt, &r.messageCount, &r.unreadCount, &r.lastMessageAt)
+	return scanner.Scan(&r.id, &r.waAccountIDValue, &r.jid, &r.number, &r.displayName, &r.waName, &r.verifiedName, &r.profilePictureID, &r.kind, &r.isWhatsAppUser, &r.isReachable, &r.createdAt, &r.updatedAt, &r.messageCount, &r.unreadCount, &r.lastMessageAt, &r.lastPlaintext, &r.lastRedacted, &r.lastPayloadRef, &r.lastEncryption)
 }

@@ -35,18 +35,19 @@ function ContactRow({ accountID, contact, selected, deleting, onDeleteContact }:
   const unread = contact.unreadCount > 0;
   return (
     <div className={`mb-1 grid grid-cols-[1fr_auto] items-center rounded-2xl transition hover:bg-muted/60 ${selected ? 'bg-primary/10' : unread ? 'bg-emerald-50/70' : ''}`}>
-      <NavLink className="grid min-w-0 grid-cols-[42px_1fr_auto] items-center gap-3 px-3 py-2.5 text-left" to={waContactPath(accountID, contact.id)}>
+      <NavLink className="grid min-w-0 grid-cols-[42px_1fr_auto] items-center gap-3 px-3 py-2 text-left" to={waContactPath(accountID, contact.id)}>
         <ContactAvatar contact={contact} />
-        <span className="min-w-0">
+        <span className="min-w-0 space-y-0.5">
           <span className="flex min-w-0 items-center gap-2">
             <span className={`truncate text-sm ${unread ? 'font-semibold text-foreground' : 'font-medium'}`}>{contact.title}</span>
             <ContactKindBadge kind={contact.kind} />
           </span>
-          <span className={`block truncate text-xs ${unread ? 'text-foreground/80' : 'text-muted-foreground'}`}>{contact.subtitle}</span>
+          <span className={`block truncate text-xs ${unread ? 'font-medium text-foreground/85' : 'text-foreground/70'}`}>{contact.preview || contact.subtitle}</span>
+          {contact.preview && <span className="block truncate text-[11px] text-muted-foreground">{contact.subtitle}</span>}
         </span>
         <span className="grid justify-items-end gap-1">
           <time className="text-[11px] text-muted-foreground">{formatChatTime(contact.lastAt)}</time>
-          {unread ? <Badge>{contact.unreadCount}</Badge> : contact.count > 0 ? <span className="text-[11px] text-muted-foreground">{contact.count}</span> : null}
+          {unread ? <Badge variant="default">{contact.unreadCount}</Badge> : contact.count > 0 ? <span className="text-[11px] text-muted-foreground">{contact.count}</span> : null}
         </span>
       </NavLink>
       <button className="mr-2 grid size-8 place-items-center rounded-full text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive disabled:opacity-50" type="button" title="删除联系人" aria-label="删除联系人" disabled={deleting} onClick={() => onDeleteContact(contact.id)}>{deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 size={14} />}</button>
@@ -71,7 +72,7 @@ function ContactKindBadge({ kind }: { kind: WAContactKind }) {
 function filterContacts(contacts: WaContact[], query: string) {
   const needle = query.trim().toLowerCase();
   if (!needle) return contacts;
-  return contacts.filter((contact) => `${contact.title} ${contact.subtitle} ${contact.id}`.toLowerCase().includes(needle));
+  return contacts.filter((contact) => `${contact.title} ${contact.subtitle} ${contact.preview} ${contact.id}`.toLowerCase().includes(needle));
 }
 
 function kindLabel(kind: WAContactKind) {

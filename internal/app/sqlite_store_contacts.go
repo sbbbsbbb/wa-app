@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	waappv1 "github.com/byte-v-forge/wa-app/gen/go/byte/v/forge/waapp/v1"
@@ -202,7 +203,39 @@ WHERE s.wa_account_id=?
 	if lastMessageAt > 0 {
 		contact.LastMessageAt = timestamp(time.Unix(0, lastMessageAt).UTC())
 	}
+	preview, err := s.latestWAContactMessagePreview(ctx, waAccountIDValue, primaryRef, secondaryRef, jidRef)
+	if err != nil {
+		return err
+	}
+	contact.LastMessagePreview = preview
 	return nil
+}
+
+func (s *SQLiteStore) latestWAContactMessagePreview(ctx context.Context, waAccountIDValue string, primaryRef string, secondaryRef string, jidRef string) (string, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT m.payload, COALESCE((
+  SELECT d.payload
+  FROM wa_sqlite_decrypted_messages d
+  WHERE d.message_id=m.id
+  ORDER BY d.decrypted_at DESC, d.id DESC
+  LIMIT 1
+), '')
+FROM wa_sqlite_inbound_messages m
+JOIN wa_sqlite_message_sessions s ON s.id=m.message_session_id
+WHERE s.wa_account_id=?
+  AND json_extract(m.payload, '$.kind')=?
+  AND COALESCE(NULLIF(json_extract(m.payload, '$.contact_ref'), ''), json_extract(m.payload, '$.sender_ref')) IN (?, ?, ?)
+  AND COALESCE(json_extract(m.payload, '$.delete_status'), 'MESSAGE_DELETE_STATUS_NOT_DELETED')<>'MESSAGE_DELETE_STATUS_DELETED_FOR_ME'
+ORDER BY m.received_at DESC, m.id DESC
+LIMIT 1`, waAccountIDValue, waappv1.InboundMessageKind_INBOUND_MESSAGE_KIND_MESSAGE.String(), primaryRef, secondaryRef, jidRef)
+	message, decrypted, err := scanSQLiteAccountMessageRow(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", err
+	}
+	text := decrypted.GetPlaintextText()
+	return contactMessagePreview(text.GetValue(), text.GetRedactedValue(), message.GetPayloadRef(), message.GetEncryptionState()), nil
 }
 
 func sqliteContactRef(refs []string, index int) string {
