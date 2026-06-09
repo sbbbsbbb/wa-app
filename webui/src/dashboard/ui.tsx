@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, Ref } from 'react';
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
@@ -28,8 +28,8 @@ export function Badge({ variant = 'secondary', children }: { variant?: BadgeVari
   return <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${variants[variant]}`}>{children}</span>;
 }
 
-export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} className={`h-10 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary disabled:opacity-60 ${props.className || ''}`} />;
+export function Input({ className = '', ref, ...props }: InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> }) {
+  return <input ref={ref} {...props} className={`h-10 rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary disabled:opacity-60 ${className}`} />;
 }
 
 export function Field({ children }: { children: ReactNode }) {
