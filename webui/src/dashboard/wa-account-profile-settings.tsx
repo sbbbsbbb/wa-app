@@ -1,4 +1,5 @@
-import { type FormEvent, useEffect, useRef, useState } from 'react';
+import { type FormEvent, useRef, useState } from 'react';
+import AvatarEditor, { type AvatarEditorRef } from 'react-avatar-editor';
 import { Check, ImagePlus, Loader2, Trash2, UserRound, X } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import type { WAAccount } from '../proto/byte/v/forge/waapp/v1/profile';
@@ -17,9 +18,17 @@ type Props = {
 export function WaAccountProfileSettings({ account, onDone, onError }: Props) {
   const [displayName, setDisplayName] = useState('');
   const [picture, setPicture] = useState<File | null>(null);
+  const [pictureReady, setPictureReady] = useState(false);
   const [lastPictureID, setLastPictureID] = useState('');
+  const [scale, setScale] = useState(1.1);
   const fileInput = useRef<HTMLInputElement>(null);
-  const preview = usePicturePreview(picture);
+  const editor = useRef<AvatarEditorRef>(null);
+  const resetPictureSelection = () => {
+    setPicture(null);
+    setPictureReady(false);
+    setScale(1.1);
+    if (fileInput.current) fileInput.current.value = '';
+  };
   const handleError = (error: unknown) => onError(error instanceof Error ? error.message : String(error));
   const nameMutation = useMutation({
     mutationFn: () => setWaAccountProfileName(account, displayName),
@@ -30,11 +39,11 @@ export function WaAccountProfileSettings({ account, onDone, onError }: Props) {
     mutationFn: async () => {
       if (!picture) throw new Error('请选择头像图片');
       if (picture.size > maxProfilePictureBytes) throw new Error('头像图片不能超过 2 MiB');
-      return setWaAccountProfilePicture(account, { image_base64: await fileBase64(picture), content_type: picture.type || 'application/octet-stream' });
+      if (!pictureReady) throw new Error('头像图片仍在加载');
+      return setWaAccountProfilePicture(account, { image_base64: avatarBase64(editor.current), content_type: 'image/jpeg' });
     },
     onSuccess: (resp) => {
-      setPicture(null);
-      if (fileInput.current) fileInput.current.value = '';
+      resetPictureSelection();
       setLastPictureID(resp.profile_picture_id || '');
       onDone(resp.profile_picture_id ? '头像已提交' : '头像请求已提交');
     },
@@ -42,7 +51,7 @@ export function WaAccountProfileSettings({ account, onDone, onError }: Props) {
   });
   const removeMutation = useMutation({
     mutationFn: () => removeWaAccountProfilePicture(account),
-    onSuccess: () => { setPicture(null); setLastPictureID(''); if (fileInput.current) fileInput.current.value = ''; onDone('头像移除请求已提交'); },
+    onSuccess: () => { resetPictureSelection(); setLastPictureID(''); onDone('头像移除请求已提交'); },
     onError: handleError,
   });
   const busy = nameMutation.isPending || pictureMutation.isPending || removeMutation.isPending;
@@ -54,12 +63,42 @@ export function WaAccountProfileSettings({ account, onDone, onError }: Props) {
       </div>
       <div className="grid gap-4 lg:grid-cols-[11rem_minmax(0,1fr)]">
         <form className="grid gap-3 rounded-2xl border border-border bg-background p-3" onSubmit={(event) => submit(event, pictureMutation.mutate)}>
-          <div className="mx-auto grid size-28 place-items-center overflow-hidden rounded-full bg-emerald-50 ring-1 ring-border/60">{preview ? <img className="size-full object-cover" src={preview} alt="待提交头像预览" /> : <WhatsAppIcon className="size-16" />}</div>
-          <Input ref={fileInput} className="hidden" type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={(event) => setPicture(event.target.files?.[0] || null)} />
+          <div className="mx-auto grid size-40 place-items-center overflow-hidden rounded-2xl bg-emerald-50">
+            {picture ? (
+              <AvatarEditor
+                ref={editor}
+                image={picture}
+                width={512}
+                height={512}
+                border={48}
+                borderRadius={256}
+                scale={scale}
+                color={[15, 23, 42, 0.45]}
+                backgroundColor="#ffffff"
+                onLoadSuccess={() => setPictureReady(true)}
+                onLoadFailure={() => { setPictureReady(false); onError('头像图片加载失败'); }}
+                style={{ width: '10rem', height: '10rem', cursor: 'grab' }}
+              />
+            ) : <WhatsAppIcon className="size-16" />}
+          </div>
+          {picture ? (
+            <Field>
+              <FieldLabel>缩放</FieldLabel>
+              <Input className="h-2 cursor-pointer border-0 px-0 accent-primary" type="range" min="1" max="3" step="0.05" value={scale} disabled={busy} onChange={(event) => setScale(Number(event.target.value))} />
+            </Field>
+          ) : null}
+          <Input
+            ref={fileInput}
+            className="hidden"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            disabled={busy}
+            onChange={(event) => { setPicture(event.target.files?.[0] || null); setPictureReady(false); }}
+          />
           <div className="flex justify-center gap-2">
             <Button type="button" size="sm" variant="outline" disabled={busy} title="选择头像" aria-label="选择头像" onClick={() => fileInput.current?.click()}><ImagePlus size={15} /></Button>
-            <Button type="submit" size="sm" disabled={busy || !picture} title="提交头像" aria-label="提交头像">{pictureMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <Check size={15} />}</Button>
-            <Button type="button" size="sm" variant="outline" disabled={busy || !picture} title="取消选择" aria-label="取消选择" onClick={() => { setPicture(null); if (fileInput.current) fileInput.current.value = ''; }}><X size={15} /></Button>
+            <Button type="submit" size="sm" disabled={busy || !picture || !pictureReady} title="提交头像" aria-label="提交头像">{pictureMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <Check size={15} />}</Button>
+            <Button type="button" size="sm" variant="outline" disabled={busy || !picture} title="取消选择" aria-label="取消选择" onClick={resetPictureSelection}><X size={15} /></Button>
             <Button type="button" size="sm" variant="destructive" disabled={busy} title="移除头像" aria-label="移除头像" onClick={() => removeMutation.mutate()}><Trash2 size={15} /></Button>
           </div>
           <p className="truncate text-center text-xs text-muted-foreground">{picture ? `${picture.name} · ${formatBytes(picture.size)}` : lastPictureID ? `已提交 ID ${lastPictureID}` : 'JPEG / PNG / WebP，最大 2 MiB'}</p>
@@ -86,13 +125,11 @@ function submit(event: FormEvent<HTMLFormElement>, run: () => void) {
   run();
 }
 
-async function fileBase64(file: File) {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  let binary = '';
-  for (let index = 0; index < bytes.length; index += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-  }
-  return btoa(binary);
+function avatarBase64(editor: AvatarEditorRef | null) {
+  const dataURL = editor?.getImageScaledToCanvas().toDataURL('image/jpeg', 0.92);
+  const base64 = dataURL?.slice(dataURL.indexOf(',') + 1);
+  if (!base64) throw new Error('头像图片编码失败');
+  return base64;
 }
 
 function formatBytes(value: number) {
@@ -103,18 +140,4 @@ function formatBytes(value: number) {
 
 function statusDoneMessage(message: string, status?: unknown) {
   return status ? `${message}：${String(status).replace('ACCOUNT_SETTINGS_OPERATION_STATUS_', '')}` : message;
-}
-
-function usePicturePreview(file: File | null) {
-  const [preview, setPreview] = useState('');
-  useEffect(() => {
-    if (!file) {
-      setPreview('');
-      return undefined;
-    }
-    const objectURL = URL.createObjectURL(file);
-    setPreview(objectURL);
-    return () => URL.revokeObjectURL(objectURL);
-  }, [file]);
-  return preview;
 }
