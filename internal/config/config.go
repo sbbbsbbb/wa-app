@@ -12,6 +12,7 @@ type Config struct {
 	DashboardStaticDir           string `env:"WA_APP_DASHBOARD_STATIC_DIR" envDefault:"/app/dashboard/wa"`
 	ProxyRuntimeAPIURL           string `env:"WA_APP_PROXY_RUNTIME_API_BASE_URL"`
 	ProxyRuntimeLocalProtocol    string `env:"WA_APP_PROXY_RUNTIME_LOCAL_PROTOCOL" envDefault:"socks5"`
+	CommonProxy                  string `env:"WA_COMMON_PROXY"`
 	LongConnectionProxyUsername  string `env:"WA_LONG_CONNECTION_PROXY_USERNAME" envDefault:"whatsapp"`
 	NumberProbeProxyUsername     string `env:"WA_NUMBER_PROBE_PROXY_USERNAME" envDefault:"whatsapp-probe"`
 	RegistrationProxyUsername    string `env:"WA_REGISTRATION_PROXY_USERNAME" envDefault:"whatsapp-reg"`

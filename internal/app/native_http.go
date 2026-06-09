@@ -13,9 +13,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+
+	xproxy "golang.org/x/net/proxy"
 )
 
 const defaultWASafeServerPublicKeyHex = "8e8c0f74c3ebc5d7a6865c6c3c843856b06121cce8ea774d22fb6f122512302d"
@@ -38,9 +42,40 @@ func newNativeHTTPClient(proxy string) (*nativeHTTPClient, error) {
 		if err != nil {
 			return nil, err
 		}
-		transport.Proxy = http.ProxyURL(parsed)
+		if err := configureNativeHTTPProxy(transport, parsed); err != nil {
+			return nil, err
+		}
 	}
 	return &nativeHTTPClient{client: &http.Client{Timeout: 20 * time.Second, Transport: transport}}, nil
+}
+
+func configureNativeHTTPProxy(transport *http.Transport, parsed *url.URL) error {
+	if transport == nil || parsed == nil {
+		return nil
+	}
+	switch {
+	case parsed.Scheme == "http" || parsed.Scheme == "https":
+		transport.Proxy = http.ProxyURL(parsed)
+	case strings.HasPrefix(parsed.Scheme, "socks5"):
+		dialer := &net.Dialer{Timeout: 20 * time.Second, KeepAlive: 20 * time.Second}
+		var auth *xproxy.Auth
+		if parsed.User != nil {
+			password, _ := parsed.User.Password()
+			auth = &xproxy.Auth{User: parsed.User.Username(), Password: password}
+		}
+		proxyDialer, err := xproxy.SOCKS5("tcp", parsed.Host, auth, dialer)
+		if err != nil {
+			return err
+		}
+		contextDialer, ok := proxyDialer.(xproxy.ContextDialer)
+		if !ok {
+			return fmt.Errorf("SOCKS5 proxy dialer does not support context")
+		}
+		transport.DialContext = contextDialer.DialContext
+	default:
+		return fmt.Errorf("unsupported HTTP proxy scheme")
+	}
+	return nil
 }
 
 func (c *nativeHTTPClient) postWASafe(ctx context.Context, endpoint string, plain string, userAgent string) (map[string]any, string, error) {

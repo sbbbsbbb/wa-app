@@ -56,7 +56,7 @@ func (e *NativeEngine) ResolveContactProfilePicture(ctx context.Context, input E
 	if applyChatdConnectionState(&state, update) {
 		_ = e.saveState(ctx, input.ClientProfileID, state)
 	}
-	if err != nil {
+	if err != nil || !contactProfilePictureLocationDownloadable(location) {
 		location, update, err = e.contactProfilePictureLocationFromProfileIQ(ctx, client, state, input, jid)
 		if applyChatdConnectionState(&state, update) {
 			_ = e.saveState(ctx, input.ClientProfileID, state)
@@ -111,13 +111,48 @@ func (e *NativeEngine) contactProfilePictureLocationFromUsync(ctx context.Contex
 }
 
 func (e *NativeEngine) contactProfilePictureLocationFromProfileIQ(ctx context.Context, client *chatdClient, state nativeState, input EngineContactProfilePictureInput, jid string) (contactProfilePictureLocation, chatdSessionUpdate, error) {
-	request := buildContactProfilePictureIQ(e.ids.NewID("wappic_"), jid, "preview")
-	response, update, err := client.sendIQ(ctx, state, input.RegisteredIdentityID, defaultWAAppVersion, request, "profile picture iq timed out")
-	if err != nil {
-		return contactProfilePictureLocation{}, update, err
+	var lastErr error
+	var lastUpdate chatdSessionUpdate
+	for _, target := range contactProfilePictureTargets(jid, input.ContactPNJID) {
+		for _, pictureType := range []string{"preview", "image"} {
+			request := buildContactProfilePictureIQ(e.ids.NewID("wappic_"), target, pictureType)
+			response, update, err := client.sendIQ(ctx, state, input.RegisteredIdentityID, defaultWAAppVersion, request, "profile picture iq timed out")
+			lastUpdate = update
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			location, err := contactProfilePictureLocationFromIQ(response)
+			if err == nil && contactProfilePictureLocationDownloadable(location) {
+				return location, update, nil
+			}
+			if err == nil {
+				err = NewError(waappv1.WaErrorCode_WA_ERROR_CODE_MESSAGE_NOT_FOUND, "WA profile picture download location not found", false)
+			}
+			lastErr = err
+		}
 	}
-	location, err := contactProfilePictureLocationFromIQ(response)
-	return location, update, err
+	if lastErr == nil {
+		lastErr = NewError(waappv1.WaErrorCode_WA_ERROR_CODE_MESSAGE_NOT_FOUND, "WA profile picture not found", false)
+	}
+	return contactProfilePictureLocation{}, lastUpdate, lastErr
+}
+
+func contactProfilePictureTargets(jid string, pnJID string) []string {
+	out := []string{}
+	seen := map[string]struct{}{}
+	for _, value := range []string{jid, pnJID} {
+		normalized := normalizeWAJID(value)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out
 }
 
 func buildContactProfilePictureIQ(id string, jid string, pictureType string) chatdNode {
@@ -148,7 +183,7 @@ func contactProfilePictureLocationFromPicture(picture chatdNode) (contactProfile
 		return contactProfilePictureLocation{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_MESSAGE_NOT_FOUND, "WA profile picture not found", false)
 	}
 	location := contactProfilePictureLocation{
-		ID:         contactProfilePictureID(picture),
+		ID:         contactProfilePictureIDFromPicture(picture),
 		DirectPath: strings.TrimSpace(picture.Attrs["direct_path"]),
 		URL:        strings.TrimSpace(picture.Attrs["url"]),
 	}
@@ -159,6 +194,25 @@ func contactProfilePictureLocationFromPicture(picture chatdNode) (contactProfile
 		return contactProfilePictureLocation{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_MESSAGE_NOT_FOUND, "WA profile picture not found", false)
 	}
 	return location, nil
+}
+
+func contactProfilePictureIDFromPicture(picture chatdNode) string {
+	return strings.TrimSpace(firstNonEmpty(picture.Attrs["id"], picture.Attrs["photo_id"], picture.Attrs["picture_id"]))
+}
+
+func contactProfilePictureLocationDownloadable(location contactProfilePictureLocation) bool {
+	if len(location.InlineData) > 0 {
+		return true
+	}
+	if _, ok := normalizeProfilePictureURL(location.URL); ok {
+		return true
+	}
+	directPath := strings.TrimSpace(location.DirectPath)
+	if !profilePictureDirectPathSigned(directPath) {
+		return false
+	}
+	_, ok := normalizeProfilePictureURL(directPath)
+	return ok
 }
 
 func (c *nativeHTTPClient) getProfilePicture(ctx context.Context, location contactProfilePictureLocation, userAgent string) ([]byte, string, error) {
@@ -231,11 +285,14 @@ func profilePictureDownloadURLs(location contactProfilePictureLocation) []string
 	if endpoint, ok := normalizeProfilePictureURL(location.URL); ok {
 		appendEndpoint(endpoint)
 	}
-	if endpoint, ok := normalizeProfilePictureURL(location.DirectPath); ok {
-		appendEndpoint(endpoint)
-	}
-	if strings.HasPrefix(strings.TrimSpace(location.DirectPath), "/") {
-		appendEndpoint(profilePictureMediaDirectPathHost + strings.TrimSpace(location.DirectPath))
+	directPath := strings.TrimSpace(location.DirectPath)
+	if profilePictureDirectPathSigned(directPath) {
+		if endpoint, ok := normalizeProfilePictureURL(directPath); ok {
+			appendEndpoint(endpoint)
+		}
+		if strings.HasPrefix(directPath, "/") {
+			appendEndpoint(profilePictureMediaDirectPathHost + directPath)
+		}
 	}
 	return out
 }
@@ -259,6 +316,19 @@ func normalizeProfilePictureURL(value string) (string, bool) {
 		return "", false
 	}
 	return parsed.String(), true
+}
+
+func profilePictureDirectPathSigned(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed == nil {
+		return false
+	}
+	query := parsed.Query()
+	return query.Get("oe") != "" && query.Get("oh") != ""
 }
 
 func profilePictureURLHostAllowed(host string) bool {

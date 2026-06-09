@@ -61,6 +61,7 @@ func (s *Server) GetWAContactProfilePicture(ctx context.Context, contactID strin
 		ClientProfileID:      loginState.GetClientProfileId(),
 		RegisteredIdentityID: loginState.GetRegisteredIdentityId(),
 		ContactJID:           contact.GetJid(),
+		ContactPNJID:         normalizeWAJID(contact.GetNumber()),
 		RemoteTimeout:        defaultContactProfilePictureTimeout,
 	})
 	if result.Err != nil {

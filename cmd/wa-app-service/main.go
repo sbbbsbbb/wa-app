@@ -41,6 +41,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("initialize wa-app native engine: %v", err)
 	}
+	if strings.TrimSpace(cfg.CommonProxy) != "" {
+		engine, err = engine.WithProxyURL(cfg.CommonProxy)
+		if err != nil {
+			log.Fatalf("initialize wa-app common proxy: %v", err)
+		}
+	}
 	service := app.NewServer(store, runtime, engine, clock, ids)
 	service.SetDynamicProxyRuntime(app.NewDynamicProxyRuntime(cfg.ProxyRuntimeAPIURL, cfg.ProxyRuntimeLocalProtocol))
 	service.SetGatewayProxyUsernames(

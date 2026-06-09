@@ -162,6 +162,7 @@ type EngineContactProfilePictureInput struct {
 	ClientProfileID      string
 	RegisteredIdentityID string
 	ContactJID           string
+	ContactPNJID         string
 	RemoteTimeout        time.Duration
 }
 
