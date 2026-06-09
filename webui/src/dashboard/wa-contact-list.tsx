@@ -52,7 +52,7 @@ function ContactLink({ accountID, contact, selected }: { accountID: string; cont
 function ContactAvatar({ contact }: { contact: WaContact }) {
   const [failedURL, setFailedURL] = useState('');
   if (contact.profilePictureURL && failedURL !== contact.profilePictureURL) {
-    return <img className="size-10 rounded-full border border-border object-cover" src={contact.profilePictureURL} alt={contact.title} loading="lazy" onError={() => setFailedURL(contact.profilePictureURL || '')} />;
+    return <img className="size-10 rounded-full object-cover" src={contact.profilePictureURL} alt={contact.title} loading="lazy" onError={() => setFailedURL(contact.profilePictureURL || '')} />;
   }
   return <span className="grid size-10 place-items-center rounded-full bg-emerald-50"><WhatsAppIcon className="size-6" title={contact.title} /></span>;
 }
