@@ -506,16 +506,6 @@ func (s *dashboardHTTP) handleLoginStateCheck(w http.ResponseWriter, r *http.Req
 	}
 	payload["request_id"] = firstNonEmpty(textField(payload, "request_id"), newRequestID("wa-req"))
 	payload["job_id"] = firstNonEmpty(textField(payload, "job_id"), newRequestID("wa-login-state-check"))
-	if textField(payload, "proxy_url") == "" && textField(objectField(payload, "proxy"), "proxy_url") == "" && s.service != nil {
-		route, err := s.service.LoginStateCheckProxyRoute(r.Context(), firstNonEmpty(textField(payload, "job_id"), textField(payload, "request_id")), 10*time.Minute)
-		if err != nil {
-			log.Printf("WA login-state check proxy unavailable; using direct connection: %v", err)
-		} else {
-			defer s.service.ReleaseProxyRoute(context.Background(), route)
-			payload["proxy_url"] = route.ProxyURL
-			payload["proxy"] = map[string]any{"proxy_mode": route.ProxyMode, "country_code": route.CountryCode, "account_id": route.AccountID, "route_id": route.RouteID, "proxy_username": route.Username}
-		}
-	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "build login-state check request failed"})

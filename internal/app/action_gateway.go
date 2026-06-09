@@ -641,11 +641,11 @@ func (g *actionGateway) registrationSubmitRunner(ctx context.Context, payload ma
 
 func (g *actionGateway) registrationGatewayProxy(ctx context.Context, payload map[string]any, purpose string) (DynamicProxyRoute, error) {
 	if g == nil || g.server == nil || g.server.proxyRuntime == nil {
-		return DynamicProxyRoute{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "WA_APP_PROXY_RUNTIME_API_BASE_URL is not configured", false)
+		return DynamicProxyRoute{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "WA proxy runtime is not configured", false)
 	}
 	username := strings.TrimSpace(g.server.registrationProxyUsername)
 	if username == "" {
-		return DynamicProxyRoute{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "WA_REGISTRATION_PROXY_USERNAME is required", false)
+		return DynamicProxyRoute{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "WA registration proxy username is not configured", false)
 	}
 	return g.server.proxyRuntime.GatewayProxyRoute(ctx, username, DynamicProxyRouteRequest{
 		Purpose:       purpose,

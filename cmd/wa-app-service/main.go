@@ -48,14 +48,6 @@ func main() {
 		}
 	}
 	service := app.NewServer(store, runtime, engine, clock, ids)
-	service.SetDynamicProxyRuntime(app.NewDynamicProxyRuntime(cfg.ProxyRuntimeAPIURL, cfg.ProxyRuntimeLocalProtocol))
-	service.SetGatewayProxyUsernames(
-		cfg.LongConnectionProxyUsername,
-		cfg.NumberProbeProxyUsername,
-		cfg.RegistrationProxyUsername,
-		cfg.AccountSettingsProxyUsername,
-		cfg.LoginStateCheckProxyUsername,
-	)
 	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
 		log.Fatalf("listen %s: %v", cfg.ListenAddr, err)

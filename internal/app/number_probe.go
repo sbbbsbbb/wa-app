@@ -104,11 +104,11 @@ func (s *Server) probeNumberSMSAttempt(ctx context.Context, payload map[string]a
 
 func (s *Server) numberProbeGatewayProxy(ctx context.Context, correlationID string) (DynamicProxyRoute, error) {
 	if s == nil || s.proxyRuntime == nil {
-		return DynamicProxyRoute{}, fmt.Errorf("WA_APP_PROXY_RUNTIME_API_BASE_URL is not configured")
+		return DynamicProxyRoute{}, fmt.Errorf("WA proxy runtime is not configured")
 	}
 	username := strings.TrimSpace(s.numberProbeProxyUsername)
 	if username == "" {
-		return DynamicProxyRoute{}, fmt.Errorf("WA_NUMBER_PROBE_PROXY_USERNAME is required")
+		return DynamicProxyRoute{}, fmt.Errorf("WA number probe proxy username is not configured")
 	}
 	return s.proxyRuntime.GatewayProxyRoute(ctx, username, DynamicProxyRouteRequest{
 		Purpose:       "WA_NUMBER_PROBE",

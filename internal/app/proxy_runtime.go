@@ -160,7 +160,7 @@ func (p *DynamicProxyRuntime) ReleaseProxyRoute(ctx context.Context, route Dynam
 
 func (p *DynamicProxyRuntime) gatewayProxyRule(ctx context.Context, username string) (gatewayProxyRule, error) {
 	if p == nil || p.baseURL == "" {
-		return gatewayProxyRule{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "WA_APP_PROXY_RUNTIME_API_BASE_URL is not configured", false)
+		return gatewayProxyRule{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "WA proxy runtime is not configured", false)
 	}
 	username = strings.TrimSpace(username)
 	if username == "" {
@@ -240,7 +240,7 @@ func (p *DynamicProxyRuntime) cacheGatewayProxyRules(rules []proxyIngressRuleSet
 func (p *DynamicProxyRuntime) endpoint(path string) (string, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(p.baseURL), "/"))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("invalid WA_APP_PROXY_RUNTIME_API_BASE_URL")
+		return "", fmt.Errorf("invalid WA proxy runtime API URL")
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + path
 	parsed.RawQuery = ""
@@ -251,11 +251,11 @@ func (p *DynamicProxyRuntime) endpoint(path string) (string, error) {
 func (p *DynamicProxyRuntime) gatewayProxyURL(username string, password string) (string, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(p.baseURL), "/"))
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("invalid WA_APP_PROXY_RUNTIME_API_BASE_URL")
+		return "", fmt.Errorf("invalid WA proxy runtime API URL")
 	}
 	host := strings.TrimSpace(parsed.Hostname())
 	if host == "" {
-		return "", fmt.Errorf("invalid WA_APP_PROXY_RUNTIME_API_BASE_URL")
+		return "", fmt.Errorf("invalid WA proxy runtime API URL")
 	}
 	gateway := &url.URL{
 		Scheme: p.gatewayScheme,
