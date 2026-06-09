@@ -14,6 +14,7 @@ import (
 const (
 	defaultContactUsyncTimeout = 32 * time.Second
 	maxContactUsyncBatchSize   = 50
+	businessProfileTimeoutText = "business profile iq timed out"
 )
 
 func (e *NativeEngine) ResolveContacts(ctx context.Context, input EngineContactResolveInput) EngineContactResolveResult {
@@ -52,7 +53,7 @@ func (e *NativeEngine) ResolveContacts(ctx context.Context, input EngineContactR
 		var lastErr error
 		hadSuccess := false
 		for _, variant := range contactUsyncVariants() {
-			request := buildContactUsyncIQ(e.ids.NewID("waiq_"), e.ids.NewID("sync_sid_query_"), batch, variant)
+			request := buildContactUsyncIQ(e.ids.NewID("waiq_"), e.ids.NewID("sync_sid_query_"), contactUsyncRefsFromJIDs(batch), variant)
 			response, update, err := client.sendIQ(ctx, state, input.RegisteredIdentityID, defaultWAAppVersion, request, "contact usync iq timed out")
 			if applyChatdConnectionState(&state, update) {
 				_ = e.saveState(ctx, input.ClientProfileID, state)
@@ -65,7 +66,7 @@ func (e *NativeEngine) ResolveContacts(ctx context.Context, input EngineContactR
 			logContactUsyncShape(variant.Name, response)
 			contacts := contactsFromContactUsyncIQ(input.WAAccountID, response, e.clock.Now(), batch)
 			batchContacts = append(batchContacts, contacts...)
-			if contactUsyncIdentityCount(contacts) >= len(batch) {
+			if contactUsyncDisplayIdentityCount(dedupeWAContacts(batchContacts)) >= len(batch) {
 				break
 			}
 		}
@@ -78,6 +79,9 @@ func (e *NativeEngine) ResolveContacts(ctx context.Context, input EngineContactR
 		allContacts = append(allContacts, batchContacts...)
 	}
 	allContacts = dedupeWAContacts(allContacts)
+	if profileContacts := e.resolveBusinessProfileContacts(ctx, client, state, input, allContacts); len(profileContacts) > 0 {
+		allContacts = dedupeWAContacts(append(allContacts, profileContacts...))
+	}
 	return EngineContactResolveResult{Contacts: allContacts, Queried: inputQueriedCount(input.JIDs), Resolved: contactUsyncIdentityCount(allContacts)}
 }
 
@@ -114,7 +118,7 @@ func contactsFromNativeStateMessagePayloads(accountID string, state nativeState,
 func unresolvedContactResolveJIDs(jids []string, contacts []*waappv1.WAContact) []string {
 	resolved := map[string]struct{}{}
 	for _, contact := range contacts {
-		if contactUsyncHasIdentity(contact) {
+		if contactUsyncHasDisplayIdentity(contact) {
 			resolved[contact.GetJid()] = struct{}{}
 		}
 	}
@@ -140,6 +144,11 @@ type contactUsyncVariant struct {
 	Query            []chatdNode
 	UsyncExtraAttrs  map[string]string
 	IncludeEmptyList bool
+}
+
+type contactUsyncRef struct {
+	QueryJID    string
+	FallbackLID string
 }
 
 type contactUsyncUserAddressing string
@@ -297,10 +306,18 @@ func buildContactUsyncBusinessQuery() chatdNode {
 	}
 }
 
-func buildContactUsyncIQ(id string, sid string, jids []string, variant contactUsyncVariant) chatdNode {
-	users := make([]chatdNode, 0, len(jids))
+func contactUsyncRefsFromJIDs(jids []string) []contactUsyncRef {
+	refs := make([]contactUsyncRef, 0, len(jids))
 	for _, jid := range jids {
-		users = append(users, chatdNode{Tag: "user", Attrs: contactUsyncUserAttrs(jid, variant.UserAddressing)})
+		refs = append(refs, contactUsyncRef{QueryJID: jid, FallbackLID: jid})
+	}
+	return refs
+}
+
+func buildContactUsyncIQ(id string, sid string, refs []contactUsyncRef, variant contactUsyncVariant) chatdNode {
+	users := make([]chatdNode, 0, len(refs))
+	for _, ref := range refs {
+		users = append(users, chatdNode{Tag: "user", Attrs: contactUsyncUserAttrs(ref.QueryJID, variant.UserAddressing)})
 	}
 	attrs := map[string]string{
 		"sid":     sid,
@@ -344,6 +361,10 @@ func contactUsyncUserAttrs(jid string, addressing contactUsyncUserAddressing) ma
 }
 
 func contactsFromContactUsyncIQ(accountID string, response chatdNode, now time.Time, requestedJIDs []string) []*waappv1.WAContact {
+	return contactsFromContactUsyncIQForRefs(accountID, response, now, contactUsyncRefsFromJIDs(requestedJIDs))
+}
+
+func contactsFromContactUsyncIQForRefs(accountID string, response chatdNode, now time.Time, refs []contactUsyncRef) []*waappv1.WAContact {
 	if accountID == "" {
 		return nil
 	}
@@ -354,21 +375,21 @@ func contactsFromContactUsyncIQ(accountID string, response chatdNode, now time.T
 	contacts := []*waappv1.WAContact{}
 	for _, listTag := range []string{"list", "side_list"} {
 		if listNode, ok := chatdChild(usync, listTag); ok {
-			contacts = append(contacts, contactsFromContactUsyncList(accountID, listNode, now, requestedJIDs)...)
+			contacts = append(contacts, contactsFromContactUsyncList(accountID, listNode, now, refs)...)
 		}
 	}
 	return dedupeWAContacts(contacts)
 }
 
-func contactsFromContactUsyncList(accountID string, listNode chatdNode, now time.Time, requestedJIDs []string) []*waappv1.WAContact {
+func contactsFromContactUsyncList(accountID string, listNode chatdNode, now time.Time, refs []contactUsyncRef) []*waappv1.WAContact {
 	contacts := []*waappv1.WAContact{}
 	for index, userNode := range chatdChildren(listNode) {
 		if userNode.Tag != "user" {
 			continue
 		}
 		fallbackLID := ""
-		if index < len(requestedJIDs) {
-			fallbackLID = requestedJIDs[index]
+		if index < len(refs) {
+			fallbackLID = refs[index].FallbackLID
 		}
 		if contact := contactFromContactUsyncUser(accountID, userNode, now, fallbackLID); contact != nil {
 			contacts = append(contacts, contact)
@@ -431,6 +452,7 @@ func contactUsyncNames(userNode chatdNode) (string, string, string, bool) {
 	contactNode, _ := chatdChild(userNode, "contact")
 	usernameNode, hasUsername := chatdChild(userNode, "username")
 	businessNode, hasBusiness := chatdChild(userNode, "business")
+	businessProfileNode, hasBusinessProfile := findChatdNode(userNode, "business_profile")
 	displayName := waContactName(firstNonEmpty(
 		userNode.Attrs["display_name"],
 		userNode.Attrs["notify"],
@@ -447,13 +469,19 @@ func contactUsyncNames(userNode chatdNode) (string, string, string, bool) {
 	verifiedName := ""
 	if hasBusiness {
 		if verifiedNode, ok := chatdChild(businessNode, "verified_name"); ok {
-			verifiedName = waContactName(firstNonEmpty(chatdNodeText(verifiedNode), verifiedNode.Attrs["display_name"], verifiedNode.Attrs["name"]))
+			verifiedName = firstNonEmpty(verifiedName, businessNodeName(verifiedNode))
 		}
 		if profileNode, ok := chatdChild(businessNode, "profile"); ok {
-			displayName = firstNonEmpty(displayName, waContactName(firstNonEmpty(profileNode.Attrs["display_name"], profileNode.Attrs["name"], chatdNodeText(profileNode))))
+			displayName = firstNonEmpty(displayName, businessNodeName(profileNode))
 		}
 	}
-	return displayName, username, verifiedName, hasBusiness
+	if hasBusinessProfile {
+		displayName = firstNonEmpty(displayName, businessNodeName(businessProfileNode), businessProfileNodeName(businessProfileNode))
+		if verifiedNode, ok := findChatdNode(businessProfileNode, "verified_name"); ok {
+			verifiedName = firstNonEmpty(verifiedName, businessNodeName(verifiedNode))
+		}
+	}
+	return displayName, username, verifiedName, hasBusiness || hasBusinessProfile
 }
 
 func firstUsernameInNode(node chatdNode) string {
@@ -494,27 +522,247 @@ func contactTextName(node chatdNode) string {
 }
 
 func firstPNJIDInNode(node chatdNode) string {
-	return firstJIDInNodeBySuffix(node, "@s.whatsapp.net")
+	return firstJIDInNodeBySuffix(node, "@s.whatsapp.net", allowedPNJIDAttr)
 }
 
 func firstLIDJIDInNode(node chatdNode) string {
-	return firstJIDInNodeBySuffix(node, "@lid")
+	return firstJIDInNodeBySuffix(node, "@lid", allowedLIDJIDAttr)
 }
 
-func firstJIDInNodeBySuffix(node chatdNode, suffix string) string {
-	for _, value := range node.Attrs {
-		jid := normalizeWAJID(value)
+func firstJIDInNodeBySuffix(node chatdNode, suffix string, allowed func(string, string) bool) string {
+	for key, value := range node.Attrs {
+		if !allowed(node.Tag, key) {
+			continue
+		}
+		jid := jidFromChatdValue(key, value)
 		if strings.HasSuffix(jid, suffix) {
 			return jid
 		}
 	}
-	if text := normalizeWAJID(chatdNodeText(node)); strings.HasSuffix(text, suffix) {
-		return text
+	if allowed(node.Tag, "") {
+		text := jidFromChatdValue(node.Tag, chatdNodeText(node))
+		if strings.HasSuffix(text, suffix) {
+			return text
+		}
 	}
 	for _, child := range chatdChildren(node) {
-		if jid := firstJIDInNodeBySuffix(child, suffix); jid != "" {
+		if jid := firstJIDInNodeBySuffix(child, suffix, allowed); jid != "" {
 			return jid
 		}
+	}
+	return ""
+}
+
+func jidFromChatdValue(key string, value string) string {
+	key = strings.TrimSpace(key)
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	jid := normalizeWAJID(value)
+	if strings.Contains(value, "@") {
+		return jid
+	}
+	switch key {
+	case "number", "phone", "phone_number", "business_phone_number", "wa_id", "pn":
+		return phoneNumberWAJID(value)
+	default:
+		return jid
+	}
+}
+
+func allowedPNJIDAttr(tag string, key string) bool {
+	switch key {
+	case "jid", "pn", "pn_jid", "new_jid", "sender_pn", "sender_pn_jid",
+		"participant_pn", "participant_pn_jid", "peer_recipient_pn", "peer_recipient_pn_jid",
+		"recipient_pn", "recipient_pn_jid", "contact_pn", "contact_pn_jid",
+		"author_pn", "author_pn_jid", "creator_pn", "creator_pn_jid", "phone_number",
+		"business_phone_number", "number", "phone", "wa_id":
+		return true
+	default:
+		return key == "" && (tag == "phone_number" || tag == "business_phone_number" || tag == "number" || tag == "phone")
+	}
+}
+
+func allowedLIDJIDAttr(tag string, key string) bool {
+	switch key {
+	case "jid", "lid", "lid_jid", "new_lid", "sender_lid", "participant_lid",
+		"peer_recipient_lid", "recipient_latest_lid", "recipient_lid", "contact_lid",
+		"author_lid", "creator_lid":
+		return true
+	default:
+		return key == "" && (tag == "lid" || tag == "lid_jid")
+	}
+}
+
+func businessNodeName(node chatdNode) string {
+	for _, key := range []string{"verified_name", "business_name", "display_name", "name", "push_name", "title"} {
+		if value := waContactName(node.Attrs[key]); value != "" {
+			return value
+		}
+	}
+	switch node.Tag {
+	case "verified_name", "business_name", "display_name", "name", "push_name", "title":
+		if value := waContactName(chatdNodeText(node)); value != "" {
+			return value
+		}
+	}
+	for _, child := range chatdChildren(node) {
+		if value := businessNodeName(child); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func businessProfileNodeName(node chatdNode) string {
+	for _, tag := range []string{"business_name", "verified_name", "display_name", "name", "push_name", "profile_name"} {
+		if child, ok := findChatdNode(node, tag); ok {
+			if value := businessNodeName(child); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func (e *NativeEngine) resolveBusinessProfileContacts(ctx context.Context, client *chatdClient, state nativeState, input EngineContactResolveInput, contacts []*waappv1.WAContact) []*waappv1.WAContact {
+	refs := businessProfileRefs(contacts)
+	if len(refs) == 0 {
+		return nil
+	}
+	out := []*waappv1.WAContact{}
+	for _, ref := range refs {
+		for _, request := range buildBusinessProfileIQs(e.ids.NewID, ref) {
+			response, update, err := client.sendIQ(ctx, state, input.RegisteredIdentityID, defaultWAAppVersion, request, businessProfileTimeoutText)
+			if applyChatdConnectionState(&state, update) {
+				_ = e.saveState(ctx, input.ClientProfileID, state)
+			}
+			if err != nil {
+				continue
+			}
+			logBusinessProfileShape(request.Attrs["xmlns"], response)
+			profileContacts := contactsFromBusinessProfileIQ(input.WAAccountID, response, e.clock.Now(), ref)
+			out = append(out, profileContacts...)
+			if contactUsyncDisplayIdentityCount(profileContacts) > 0 {
+				break
+			}
+		}
+	}
+	return dedupeWAContacts(out)
+}
+
+func businessProfileRefs(contacts []*waappv1.WAContact) []contactUsyncRef {
+	refs := []contactUsyncRef{}
+	seen := map[string]struct{}{}
+	for _, contact := range contacts {
+		if contact == nil || !contactNeedsDisplayResolution(contact) {
+			continue
+		}
+		queries := []string{contact.GetJid()}
+		if pnJID := phoneNumberWAJID(contact.GetNumber()); pnJID != "" {
+			queries = append([]string{pnJID}, queries...)
+		}
+		for _, query := range queries {
+			query = normalizeWAJID(query)
+			if query == "" {
+				continue
+			}
+			key := contact.GetJid() + "\x00" + query
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			refs = append(refs, contactUsyncRef{QueryJID: query, FallbackLID: contact.GetJid()})
+		}
+	}
+	return refs
+}
+
+func buildBusinessProfileIQs(newID func(string) string, ref contactUsyncRef) []chatdNode {
+	return []chatdNode{
+		buildBusinessProfileIQ(newID("wabiz_"), ref.QueryJID, "16380"),
+		buildBusinessProfileIQ(newID("wabiz_"), ref.QueryJID, "1"),
+		buildVerifiedNameIQ(newID("wavname_"), ref.QueryJID),
+	}
+}
+
+func buildBusinessProfileIQ(id string, jid string, version string) chatdNode {
+	return chatdNode{
+		Tag:   "iq",
+		Attrs: map[string]string{"xmlns": "w:biz", "id": id, "type": "get"},
+		Content: []chatdNode{{
+			Tag:   "business_profile",
+			Attrs: map[string]string{"v": version},
+			Content: []chatdNode{{
+				Tag:   "profile",
+				Attrs: map[string]string{"jid": normalizeWAJID(jid)},
+			}},
+		}},
+	}
+}
+
+func buildVerifiedNameIQ(id string, jid string) chatdNode {
+	return chatdNode{
+		Tag:   "iq",
+		Attrs: map[string]string{"xmlns": "w:biz", "id": id, "type": "get"},
+		Content: []chatdNode{{
+			Tag:   "verified_name",
+			Attrs: map[string]string{"jid": normalizeWAJID(jid)},
+		}},
+	}
+}
+
+func contactsFromBusinessProfileIQ(accountID string, response chatdNode, now time.Time, ref contactUsyncRef) []*waappv1.WAContact {
+	if accountID == "" || normalizeContactUsyncFallbackLID(ref.FallbackLID) == "" || response.Attrs["type"] == "error" {
+		return nil
+	}
+	if profile, ok := findChatdNode(response, "profile"); ok {
+		if contact := contactFromBusinessNode(accountID, profile, now, ref); contact != nil {
+			return []*waappv1.WAContact{contact}
+		}
+	}
+	if verifiedName, ok := findChatdNode(response, "verified_name"); ok {
+		if contact := contactFromBusinessNode(accountID, verifiedName, now, ref); contact != nil {
+			return []*waappv1.WAContact{contact}
+		}
+	}
+	return nil
+}
+
+func contactFromBusinessNode(accountID string, node chatdNode, now time.Time, ref contactUsyncRef) *waappv1.WAContact {
+	lidJID := firstNonEmpty(firstLIDJIDInNode(node), normalizeContactUsyncFallbackLID(ref.FallbackLID))
+	if lidJID == "" {
+		return nil
+	}
+	contact := contactFromRef(accountID, lidJID, now, now)
+	if contact == nil {
+		return nil
+	}
+	pnJID := firstNonEmpty(firstPNJIDInNode(node), normalizePNQueryJID(ref.QueryJID))
+	contact.Number = contactNumberForJID(pnJID)
+	displayName := businessProfileNodeName(node)
+	verifiedName := ""
+	if node.Tag == "verified_name" {
+		verifiedName = businessNodeName(node)
+	} else if verifiedNode, ok := findChatdNode(node, "verified_name"); ok {
+		verifiedName = businessNodeName(verifiedNode)
+	}
+	displayName = firstNonEmpty(displayName, verifiedName)
+	if displayName == "" {
+		return nil
+	}
+	contact.DisplayName = displayName
+	contact.WaName = displayName
+	contact.VerifiedName = verifiedName
+	contact.Kind = waappv1.WAContactKind_WA_CONTACT_KIND_BUSINESS
+	return contact
+}
+
+func normalizePNQueryJID(jid string) string {
+	jid = normalizeWAJID(jid)
+	if strings.HasSuffix(jid, "@s.whatsapp.net") {
+		return jid
 	}
 	return ""
 }
@@ -623,13 +871,49 @@ func contactUsyncHasIdentity(contact *waappv1.WAContact) bool {
 	return name != "" && name != "未知联系人" && !strings.HasPrefix(name, "联系人 ") && !strings.HasPrefix(name, "LID ")
 }
 
+func contactUsyncHasDisplayIdentity(contact *waappv1.WAContact) bool {
+	if contact == nil {
+		return false
+	}
+	if contact.GetWaName() != "" || contact.GetVerifiedName() != "" {
+		return true
+	}
+	return !contactDisplayNeedsResolution(contact)
+}
+
+func contactNeedsDisplayResolution(contact *waappv1.WAContact) bool {
+	return contact != nil && strings.HasSuffix(contact.GetJid(), "@lid") && contactDisplayNeedsResolution(contact)
+}
+
+func contactDisplayNeedsResolution(contact *waappv1.WAContact) bool {
+	if contact == nil {
+		return false
+	}
+	name := strings.TrimSpace(contact.GetDisplayName())
+	if name == "" || name == "未知联系人" || strings.HasPrefix(name, "联系人 ") || strings.HasPrefix(name, "LID ") {
+		return true
+	}
+	number := strings.TrimSpace(contact.GetNumber())
+	return number != "" && (name == "+"+number || digitsOnly(name) == number)
+}
+
+func contactUsyncDisplayIdentityCount(contacts []*waappv1.WAContact) int {
+	count := 0
+	for _, contact := range contacts {
+		if contactUsyncHasDisplayIdentity(contact) {
+			count++
+		}
+	}
+	return count
+}
+
 func betterWAContactDisplayName(contact *waappv1.WAContact, candidate string) string {
 	candidate = waContactName(candidate)
 	if candidate == "" {
 		return contact.GetDisplayName()
 	}
 	current := contact.GetDisplayName()
-	if current == "" || current == "未知联系人" || strings.HasPrefix(current, "联系人 ") || strings.HasPrefix(current, "LID ") {
+	if current == "" || current == "未知联系人" || strings.HasPrefix(current, "联系人 ") || strings.HasPrefix(current, "LID ") || contactDisplayNeedsResolution(contact) {
 		return candidate
 	}
 	return current
@@ -681,6 +965,33 @@ func logContactUsyncShape(variant string, response chatdNode) {
 		formatCountMap(shape.QueryProtocolTags),
 		formatCountMap(shape.UserAttrKeys),
 		formatCountMap(shape.UserJIDDomains),
+		formatCountMap(shape.ChildTags),
+		formatCountMap(shape.ChildAttrKeys),
+		shape.PNHints,
+		shape.LIDHints,
+		shape.NameHints,
+	)
+}
+
+func logBusinessProfileShape(namespace string, response chatdNode) {
+	shape := newContactUsyncShape()
+	shape.IQType = response.Attrs["type"]
+	for _, child := range chatdChildren(response) {
+		collectContactUsyncChildShape(shape, child, child.Tag)
+		if firstPNJIDInNode(child) != "" {
+			shape.PNHints++
+		}
+		if firstLIDJIDInNode(child) != "" {
+			shape.LIDHints++
+		}
+		if businessProfileNodeName(child) != "" || businessNodeName(child) != "" {
+			shape.NameHints++
+		}
+	}
+	log.Printf(
+		"WA business profile shape xmlns=%s iq_type=%s child_tags=%s child_attr_keys=%s pn_hints=%d lid_hints=%d name_hints=%d",
+		namespace,
+		shape.IQType,
 		formatCountMap(shape.ChildTags),
 		formatCountMap(shape.ChildAttrKeys),
 		shape.PNHints,

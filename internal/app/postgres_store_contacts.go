@@ -27,6 +27,7 @@ ON CONFLICT (contact_id) DO UPDATE SET
   display_name=CASE
     WHEN NULLIF(EXCLUDED.display_name,'') IS NULL THEN wa_contacts.display_name
     WHEN wa_contacts.display_name='' OR wa_contacts.display_name='未知联系人' OR wa_contacts.display_name LIKE '联系人 %' OR wa_contacts.display_name LIKE 'LID %' THEN EXCLUDED.display_name
+    WHEN COALESCE(NULLIF(wa_contacts.number,''), NULLIF(EXCLUDED.number,''), '') <> '' AND wa_contacts.display_name='+' || COALESCE(NULLIF(wa_contacts.number,''), NULLIF(EXCLUDED.number,''), '') THEN EXCLUDED.display_name
     ELSE wa_contacts.display_name
   END,
   wa_name=COALESCE(NULLIF(EXCLUDED.wa_name,''), wa_contacts.wa_name),
