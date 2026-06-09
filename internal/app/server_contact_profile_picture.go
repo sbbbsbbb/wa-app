@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -63,6 +64,7 @@ func (s *Server) GetWAContactProfilePicture(ctx context.Context, contactID strin
 		RemoteTimeout:        defaultContactProfilePictureTimeout,
 	})
 	if result.Err != nil {
+		logWAContactProfilePictureError(result.Err)
 		return WAContactProfilePicture{}, result.Err
 	}
 	if result.ProfilePictureID != "" && result.ProfilePictureID != contact.GetProfilePictureId() {
@@ -111,4 +113,13 @@ func contactProfilePictureCacheKey(contactID string, profilePictureID string) st
 func IsWAContactProfilePictureNotFound(err error) bool {
 	var appErr *AppError
 	return errors.As(err, &appErr) && appErr.Code == waappv1.WaErrorCode_WA_ERROR_CODE_MESSAGE_NOT_FOUND
+}
+
+func logWAContactProfilePictureError(err error) {
+	var appErr *AppError
+	if errors.As(err, &appErr) {
+		log.Printf("WA contact profile picture fetch failed code=%s retryable=%t", appErr.Code.String(), appErr.Retryable)
+		return
+	}
+	log.Printf("WA contact profile picture fetch failed code=%s retryable=false", waappv1.WaErrorCode_WA_ERROR_CODE_INTERNAL.String())
 }
