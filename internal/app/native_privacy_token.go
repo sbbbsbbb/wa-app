@@ -144,14 +144,8 @@ func applyPrivacyTokenUpdates(state *nativeState, updates []nativePrivacyTokenUp
 	return changed
 }
 
-func trustedContactTokenForProfilePicture(state nativeState, jid string, pnJID string, now time.Time) []byte {
-	for _, candidate := range []string{jid, pnJID} {
-		token := privacyTokenForJID(state, candidate, now)
-		if len(token) > 0 {
-			return token
-		}
-	}
-	return nil
+func trustedContactTokenForProfilePicture(state nativeState, jid string, now time.Time) []byte {
+	return privacyTokenForJID(state, jid, now)
 }
 
 func privacyTokenForJID(state nativeState, jid string, now time.Time) []byte {

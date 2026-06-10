@@ -104,7 +104,7 @@ func (e *NativeEngine) resolveContactProfilePictureWithSender(ctx context.Contex
 }
 
 func (e *NativeEngine) contactProfilePictureLocationsFromProfileIQ(ctx context.Context, sender chatdIQSender, state nativeState, input EngineContactProfilePictureInput, jid string) ([]contactProfilePictureLocation, chatdSessionUpdate, error) {
-	targets := contactProfilePictureTargets(state, jid, input.ContactPNJID, e.clock.Now())
+	targets := contactProfilePictureTargets(jid, input.ContactPNJID)
 	if len(targets) == 0 {
 		return nil, chatdSessionUpdate{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_VALIDATION_FAILED, "WA contact profile picture target is incomplete", false)
 	}
@@ -114,7 +114,7 @@ func (e *NativeEngine) contactProfilePictureLocationsFromProfileIQ(ctx context.C
 	for _, target := range targets {
 		for _, pictureType := range contactProfilePictureQueryTypes {
 			for _, pictureID := range contactProfilePictureRequestIDs(input.ContactPictureID) {
-				trustedContactToken := trustedContactTokenForProfilePicture(state, target, input.ContactPNJID, e.clock.Now())
+				trustedContactToken := trustedContactTokenForProfilePicture(state, target, e.clock.Now())
 				request := buildContactProfilePictureIQ(e.ids.NewID("wappic_"), target, pictureType, pictureID, trustedContactToken)
 				response, update, err := sender.sendIQ(ctx, state, input.RegisteredIdentityID, defaultWAAppVersion, request, "profile picture iq timed out")
 				lastUpdate = mergeContactProfilePictureUpdate(lastUpdate, update)
@@ -159,14 +159,10 @@ func mergeContactProfilePictureUpdate(current chatdSessionUpdate, next chatdSess
 	return mergeChatdSessionUpdate(current, next)
 }
 
-func contactProfilePictureTargets(state nativeState, jid string, pnJID string, now time.Time) []string {
+func contactProfilePictureTargets(jid string, pnJID string) []string {
 	jid = normalizeWAJID(jid)
 	pnJID = normalizeWAJID(pnJID)
-	candidates := []string{}
-	if len(trustedContactTokenForProfilePicture(state, jid, pnJID, now)) > 0 {
-		candidates = append(candidates, jid)
-	}
-	candidates = append(candidates, pnJID, jid)
+	candidates := []string{pnJID, jid}
 	out := []string{}
 	seen := map[string]struct{}{}
 	for _, candidate := range candidates {
@@ -188,7 +184,7 @@ func contactProfilePictureRequestIDs(pictureID string) []string {
 	if pictureID == "" {
 		return []string{""}
 	}
-	return []string{"", pictureID}
+	return []string{pictureID, ""}
 }
 
 func buildContactProfilePictureIQ(id string, jid string, pictureType string, pictureID string, trustedContactToken []byte) chatdNode {
@@ -217,9 +213,6 @@ func contactProfilePictureNeedsURLQuery(jid string, pictureType string) bool {
 
 func contactProfilePictureTargetNeedsURLQuery(jid string) bool {
 	jid = normalizeWAJID(jid)
-	if strings.HasSuffix(jid, "@lid") {
-		return true
-	}
 	user := strings.SplitN(jid, "@", 2)[0]
 	user = strings.SplitN(user, ":", 2)[0]
 	value, ok := parsePositiveInt64(user)
@@ -423,14 +416,14 @@ func profilePictureDownloadURLs(location contactProfilePictureLocation) []string
 		seen[endpoint] = struct{}{}
 		out = append(out, endpoint)
 	}
+	if endpoint, ok := normalizeProfilePictureURL(location.URL); ok {
+		appendEndpoint(endpoint)
+	}
 	directPath := strings.TrimSpace(location.DirectPath)
 	if profilePictureDirectPathSigned(directPath) {
 		if endpoint, ok := normalizeProfilePictureURL(directPath); ok {
 			appendEndpoint(endpoint)
 		}
-	}
-	if endpoint, ok := normalizeProfilePictureURL(location.URL); ok {
-		appendEndpoint(endpoint)
 	}
 	return out
 }
@@ -474,7 +467,9 @@ func profilePictureURLHostAllowed(host string) bool {
 	if cut, _, ok := strings.Cut(host, ":"); ok {
 		host = cut
 	}
-	return host == "whatsapp.net" || strings.HasSuffix(host, ".whatsapp.net") || host == "fbcdn.net" || strings.HasSuffix(host, ".fbcdn.net")
+	return host == "whatsapp.net" || strings.HasSuffix(host, ".whatsapp.net") ||
+		host == "fbcdn.net" || strings.HasSuffix(host, ".fbcdn.net") ||
+		host == "fbsbx.com" || strings.HasSuffix(host, ".fbsbx.com")
 }
 
 func readLimitedProfilePicture(reader io.Reader) ([]byte, error) {
