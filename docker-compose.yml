@@ -1,6 +1,8 @@
 services:
+  # ── wa-app 核心服务 ─────────────────────────────────────────────
   wa-app:
     image: ghcr.io/pood1e/wa-app-service:${WA_APP_IMAGE_TAG}
+    container_name: wa-app
     env_file:
       - .env
     environment:
@@ -17,7 +19,40 @@ services:
     volumes:
       - wa-app-data:${WA_APP_DATA_DIR:-/var/lib/wa-app}
     restart: unless-stopped
+    # depends_on:
+    #   postgres:
+    #     condition: service_started
+    #   redis:
+    #     condition: service_started
+
+  # ── PostgreSQL（可选）─────────────────────────────────────────
+  # 取消下方注释并设置 WA_APP_PG_DSN 以启用 PostgreSQL 持久化
+  # postgres:
+  #   image: postgres:17-alpine
+  #   container_name: wa-app-postgres
+  #   environment:
+  #     - POSTGRES_USER=wa-app
+  #     - POSTGRES_PASSWORD=wa-app-password
+  #     - POSTGRES_DB=wa-app
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+  #   restart: unless-stopped
+
+  # ── Redis（可选）──────────────────────────────────────────────
+  # 取消下方注释并设置 WA_APP_REDIS_URL 以启用 Redis 运行时状态
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: wa-app-redis
+  #   volumes:
+  #     - redis-data:/data
+  #   ports:
+  #     - "6379:6379"
+  #   restart: unless-stopped
 
 volumes:
   wa-app-data:
     name: wa-app-data
+  # postgres-data:
+  # redis-data:
