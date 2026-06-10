@@ -9,6 +9,7 @@
 | 链路 | 现状 | App/样本证据 | 风险 |
 | --- | --- | --- | --- |
 | App version / UA | 新逆向 APK 为 `2.26.22.78`；服务曾默认 `2.26.21.73` | `/Users/pood1e/workspace/wa-eng/app-release-re/app-release.apk` manifest: `versionName=2.26.22.78`、`versionCode=262207812` | 已补；旧 profile 加载时会刷新 UA 版本，避免继续携带过期版本 |
+| registration token | 新 APK 的 `classes.dex` MD5 改变，旧 baked token prefix 会导致 `/v2/code` 返回 `reason=bad_token`；旧 profile 里保存的上次 token 也会造成复用旧值 | 新 APK 完整 APK-token 派生与运行态默认派生已做 hash 级一致性校验 | 已补；运行态优先按当前 APK 常量重算 token，不复用 stale `LastCodeParams.token` |
 | WAMSYS opaque map | 运行态 `/v2/exist`、`/v2/code` 已接入 App/JNI capture 同形态的精准伪造 WAMSYS material provider；`/v2/register` 默认不额外注入 | `docs/registration-wamsys-re.md` 记录 `gpia/_gi/_gg/_gp/_ga/aid` 由 App/JNI/Play Integrity 链路生成 | 已补；仍需 blocked 样本回归验证 |
 | `/v2/register` map | 曾复用较完整 device map | `X.C27428CHd.A0F` 的 verify map 只包含 `mistyped/client_metrics/entered/mcc/mnc/sim_mcc/sim_mnc/network_operator_name/sim_operator_name/network_radio_type/simnum/hasinrc/pid/rc` 及可选扩展 | 中；register 阶段过量字段会放大异常指纹 |
 | `/v2/code` map | 缺 `pid`，且 WAMSYS 字段只能通过 tooling 手动构造 | App `/v2/code` capture 中含 `pid` 与 WAMSYS opaque map | 中高 |
@@ -23,9 +24,11 @@
 - `/v2/exist` map 补 `pid`。
 - 运行态 `/v2/exist`、`/v2/code` 自动注入 `gpia/_gi/_gg/_gp/_ga/aid`：`gpia/_gi/_gg` fresh，`_gp/_ga/aid` profile-stable，长度和编码对齐 App capture。
 - 默认 App version / User-Agent 升级到 `2.26.22.78`；加载旧 native profile 时只刷新 UA 版本，保留设备型号、Android 版本和稳定 profile 材料。
+- 默认 registration token 常量对齐新 APK；运行态优先按当前 APK 常量重算 token，避免失败重试时沿用旧 profile 中的 stale token。
 
 ## 下一步
 
-1. 回归 `2.26.22.78` UA + fresh WAMSYS 后的 `/v2/code` blocked 命中率。
-2. 对仍 blocked 的样本保留脱敏响应元数据：阶段、status、reason、param、HTTP code、是否 iOS 同号成功、同出口是否成功。
-3. 若仍 blocked，再把 `StartRegistration` 改成 `exist -> code -> register` 并补 App 边带 client_log / pre-chatd AB。
+1. 先回归 `/v2/code` 是否还返回 `bad_token`。
+2. 回归 `2.26.22.78` UA + fresh WAMSYS 后的 `/v2/code` blocked 命中率。
+3. 对仍 blocked 的样本保留脱敏响应元数据：阶段、status、reason、param、HTTP code、是否 iOS 同号成功、同出口是否成功。
+4. 若仍 blocked，再把 `StartRegistration` 改成 `exist -> code -> register` 并补 App 边带 client_log / pre-chatd AB。
