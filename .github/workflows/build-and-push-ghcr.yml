@@ -30,9 +30,9 @@ jobs:
       - name: Checkout common-lib dependency
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/common-lib
+          repository: byte-v-forge/common-lib
           path: common-lib
-          token: ${{ github.token }}
+          token: ${{ secrets.GH_COMMON_LIB_TOKEN || github.token }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
