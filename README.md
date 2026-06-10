@@ -63,3 +63,7 @@ docker compose down
 ```sh
 echo "<token>" | docker login ghcr.io -u <github-username> --password-stdin
 ```
+
+## 友情链接
+
+[LINUX DO - 新的理想型社区](https://linux.do/)
