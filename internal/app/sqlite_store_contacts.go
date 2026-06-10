@@ -191,7 +191,7 @@ func (s *SQLiteStore) enrichWAContactMessageStats(ctx context.Context, waAccount
 	var unreadCount int32
 	var lastMessageAt int64
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),
-  COALESCE(SUM(CASE WHEN json_extract(m.payload, '$.read_at') IS NULL THEN 1 ELSE 0 END), 0),
+  COALESCE(SUM(CASE WHEN json_extract(m.payload, '$.read_at') IS NULL AND COALESCE(json_extract(m.payload, '$.direction'), 'ACCOUNT_MESSAGE_DIRECTION_INBOUND')='ACCOUNT_MESSAGE_DIRECTION_INBOUND' THEN 1 ELSE 0 END), 0),
   COALESCE(MAX(m.received_at), 0)
 FROM wa_sqlite_inbound_messages m
 JOIN wa_sqlite_message_sessions s ON s.id=m.message_session_id

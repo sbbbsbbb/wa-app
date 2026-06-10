@@ -160,7 +160,7 @@ const contactSelectSQL = `SELECT c.contact_id,c.wa_account_id,c.jid,c.number,c.d
 FROM wa_contacts c
 LEFT JOIN LATERAL (
   SELECT COUNT(*) AS message_count,
-         COUNT(*) FILTER (WHERE m.read_at IS NULL) AS unread_count,
+         COUNT(*) FILTER (WHERE m.read_at IS NULL AND m.direction='ACCOUNT_MESSAGE_DIRECTION_INBOUND') AS unread_count,
          MAX(m.received_at) AS last_message_at
   FROM wa_inbound_messages m
   JOIN wa_message_sessions ms ON ms.message_session_id=m.message_session_id

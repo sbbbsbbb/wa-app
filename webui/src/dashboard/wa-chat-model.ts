@@ -145,6 +145,7 @@ function isKnownChatEvent(event: WaChatEvent) {
 }
 
 function messageSourceLabel(item: AccountMessage) {
+  if (item.source === AccountMessageSource.ACCOUNT_MESSAGE_SOURCE_LOCAL_SEND) return '已发送';
   if (item.source === AccountMessageSource.ACCOUNT_MESSAGE_SOURCE_IMPORTED_HISTORY) return '导入历史';
   if (item.encryption_state === MessageEncryptionState.MESSAGE_ENCRYPTION_STATE_DECRYPTION_FAILED) return '解密失败';
   if (item.encryption_state === MessageEncryptionState.MESSAGE_ENCRYPTION_STATE_ENCRYPTED) return '待解密';

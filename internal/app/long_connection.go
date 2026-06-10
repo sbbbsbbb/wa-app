@@ -145,6 +145,19 @@ func (m *LongConnectionManager) Runner(loginState *waappv1.LoginState) ProtocolE
 	return entry.runner
 }
 
+func (m *LongConnectionManager) MessageSessionID(loginState *waappv1.LoginState) string {
+	if m == nil || loginState == nil {
+		return ""
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry := m.entries[longConnectionKey(loginState)]
+	if entry == nil || entry.snapshot == nil {
+		return ""
+	}
+	return entry.snapshot.GetMessageSessionId()
+}
+
 func (m *LongConnectionManager) setRunner(key string, runner ProtocolEngine) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

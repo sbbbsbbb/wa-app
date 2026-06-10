@@ -42,7 +42,7 @@ func (s *PostgresStore) ListAccountMessages(ctx context.Context, waAccountIDValu
 }
 
 func (s *PostgresStore) queryAccountMessagePage(ctx context.Context, waAccountIDValue string, contactRefs []string, cursor keysetCursor, limit int) (pgx.Rows, error) {
-	query := `SELECT m.message_id,ms.wa_account_id,m.message_session_id,m.kind,m.encryption_state,m.ack_status,m.contact_ref,m.sender_ref,m.payload_ref,m.read_at,m.delete_status,m.deleted_at,COALESCE(d.plaintext_value,''),COALESCE(d.plaintext_redacted,''),COALESCE(d.plaintext_secret_ref,''),m.last_error_code,m.last_error_message,m.last_error_retryable,m.received_at
+	query := `SELECT m.message_id,ms.wa_account_id,m.message_session_id,m.kind,m.encryption_state,m.ack_status,m.direction,m.source,m.contact_ref,m.sender_ref,m.payload_ref,m.read_at,m.delete_status,m.deleted_at,COALESCE(d.plaintext_value,''),COALESCE(d.plaintext_redacted,''),COALESCE(d.plaintext_secret_ref,''),m.last_error_code,m.last_error_message,m.last_error_retryable,m.received_at
 FROM wa_inbound_messages m
 JOIN wa_message_sessions ms ON ms.message_session_id=m.message_session_id
 LEFT JOIN LATERAL (
@@ -79,12 +79,16 @@ func scanAccountMessage(rows pgx.Rows, includeSensitiveText bool) (*waappv1.Acco
 	var readAt sql.NullTime
 	var deletedAt sql.NullTime
 	var deleteStatus string
-	if err := rows.Scan(&parts.messageID, &parts.accountID, &parts.sessionID, &kind, &encryptionState, &ackStatus, &parts.contactRef, &parts.senderRef, &parts.payloadRef, &readAt, &deleteStatus, &deletedAt, &parts.plaintext, &parts.redacted, &parts.secretRef, &errCode, &errMessage, &errRetryable, &parts.receivedAt); err != nil {
+	var direction string
+	var source string
+	if err := rows.Scan(&parts.messageID, &parts.accountID, &parts.sessionID, &kind, &encryptionState, &ackStatus, &direction, &source, &parts.contactRef, &parts.senderRef, &parts.payloadRef, &readAt, &deleteStatus, &deletedAt, &parts.plaintext, &parts.redacted, &parts.secretRef, &errCode, &errMessage, &errRetryable, &parts.receivedAt); err != nil {
 		return nil, err
 	}
 	parts.kind = waappv1.InboundMessageKind(waappv1.InboundMessageKind_value[kind])
 	parts.encryptionState = waappv1.MessageEncryptionState(waappv1.MessageEncryptionState_value[encryptionState])
 	parts.ackStatus = waappv1.MessageAckStatus(waappv1.MessageAckStatus_value[ackStatus])
+	parts.direction = messageDirection(direction)
+	parts.source = messageSource(source)
 	if readAt.Valid {
 		parts.readAt = readAt.Time.UTC()
 	}
@@ -101,11 +105,12 @@ func (s *PostgresStore) ListUnreadInboundMessagesByContactRefs(ctx context.Conte
 	if len(contactRefs) == 0 {
 		return nil, nil
 	}
-	rows, err := s.pool.Query(ctx, `SELECT m.message_id,m.message_session_id,m.kind,m.encryption_state,m.ack_status,m.contact_ref,m.sender_ref,m.payload_ref,m.provider_message_id,m.provider_timestamp,m.read_at,m.delete_status,m.deleted_at,m.last_error_code,m.last_error_message,m.last_error_retryable,m.received_at
+	rows, err := s.pool.Query(ctx, `SELECT m.message_id,m.message_session_id,m.kind,m.encryption_state,m.ack_status,m.direction,m.source,m.contact_ref,m.sender_ref,m.payload_ref,m.provider_message_id,m.provider_timestamp,m.read_at,m.delete_status,m.deleted_at,m.last_error_code,m.last_error_message,m.last_error_retryable,m.received_at
 FROM wa_inbound_messages m
 JOIN wa_message_sessions ms ON ms.message_session_id=m.message_session_id
 WHERE ms.wa_account_id=$1
   AND m.kind=$2
+  AND m.direction='ACCOUNT_MESSAGE_DIRECTION_INBOUND'
   AND m.read_at IS NULL
   AND COALESCE(NULLIF(m.contact_ref,''), m.sender_ref)=ANY($3)
   AND COALESCE(m.delete_status,'MESSAGE_DELETE_STATUS_NOT_DELETED')<>'MESSAGE_DELETE_STATUS_DELETED_FOR_ME'

@@ -300,6 +300,8 @@ type messageRow struct {
 	kind              string
 	encryptionState   string
 	ackStatus         string
+	direction         string
+	source            string
 	contactRef        string
 	senderRef         string
 	payloadRef        string
@@ -321,6 +323,8 @@ func (r messageRow) toProto() *waappv1.InboundMessage {
 		Kind:              waappv1.InboundMessageKind(waappv1.InboundMessageKind_value[r.kind]),
 		EncryptionState:   waappv1.MessageEncryptionState(waappv1.MessageEncryptionState_value[r.encryptionState]),
 		AckStatus:         waappv1.MessageAckStatus(waappv1.MessageAckStatus_value[r.ackStatus]),
+		Direction:         messageDirection(r.direction),
+		Source:            messageSource(r.source),
 		ContactRef:        r.contactRef,
 		SenderRef:         r.senderRef,
 		PayloadRef:        r.payloadRef,
@@ -336,10 +340,32 @@ func (r messageRow) toProto() *waappv1.InboundMessage {
 
 func scanPostgresInboundMessage(scanner interface{ Scan(...any) error }) (*waappv1.InboundMessage, error) {
 	var r messageRow
-	if err := scanner.Scan(&r.id, &r.sessionID, &r.kind, &r.encryptionState, &r.ackStatus, &r.contactRef, &r.senderRef, &r.payloadRef, &r.providerMessageID, &r.providerTimestamp, &r.readAt, &r.deleteStatus, &r.deletedAt, &r.errCode, &r.errMessage, &r.errRetryable, &r.receivedAt); err != nil {
+	if err := scanner.Scan(&r.id, &r.sessionID, &r.kind, &r.encryptionState, &r.ackStatus, &r.direction, &r.source, &r.contactRef, &r.senderRef, &r.payloadRef, &r.providerMessageID, &r.providerTimestamp, &r.readAt, &r.deleteStatus, &r.deletedAt, &r.errCode, &r.errMessage, &r.errRetryable, &r.receivedAt); err != nil {
 		return nil, err
 	}
 	return r.toProto(), nil
+}
+
+func messageDirection(value string) waappv1.AccountMessageDirection {
+	if value == "" {
+		return waappv1.AccountMessageDirection_ACCOUNT_MESSAGE_DIRECTION_INBOUND
+	}
+	status, ok := waappv1.AccountMessageDirection_value[value]
+	if !ok {
+		return waappv1.AccountMessageDirection_ACCOUNT_MESSAGE_DIRECTION_UNSPECIFIED
+	}
+	return waappv1.AccountMessageDirection(status)
+}
+
+func messageSource(value string) waappv1.AccountMessageSource {
+	if value == "" {
+		return waappv1.AccountMessageSource_ACCOUNT_MESSAGE_SOURCE_LONG_CONNECTION
+	}
+	status, ok := waappv1.AccountMessageSource_value[value]
+	if !ok {
+		return waappv1.AccountMessageSource_ACCOUNT_MESSAGE_SOURCE_UNSPECIFIED
+	}
+	return waappv1.AccountMessageSource(status)
 }
 
 func messageDeleteStatus(value string) waappv1.MessageDeleteStatus {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	waappv1 "github.com/byte-v-forge/wa-app/gen/go/byte/v/forge/waapp/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type waTextMessageSender interface {
@@ -44,19 +45,30 @@ func (s *Server) SendTextMessage(ctx context.Context, req *waappv1.SendTextMessa
 	if !ok {
 		return &waappv1.SendTextMessageResponse{Error: ToProtoError(NewError(waappv1.WaErrorCode_WA_ERROR_CODE_UNSUPPORTED_OPERATION, "WA text message sender is not configured", false))}, nil
 	}
+	providerID := newTextProviderMessageID(req.GetClientMessageId())
 	result := sender.SendTextMessage(ctx, EngineTextMessageInput{
 		WAAccountID:          accountID,
 		ClientProfileID:      loginState.GetClientProfileId(),
 		RegisteredIdentityID: loginState.GetRegisteredIdentityId(),
 		ContactJID:           contactJID,
 		Text:                 text,
-		ClientMessageID:      req.GetClientMessageId(),
+		ClientMessageID:      providerID,
 		RemoteTimeout:        defaultTextMessageSendTimeout,
 	})
-	if result.Err != nil {
-		return &waappv1.SendTextMessageResponse{ProviderMessageId: result.ProviderMessageID, SentAt: timestamp(result.SentAt), Error: ToProtoError(result.Err)}, nil
+	if result.ProviderMessageID != "" {
+		providerID = result.ProviderMessageID
 	}
-	return &waappv1.SendTextMessageResponse{ProviderMessageId: result.ProviderMessageID, SentAt: timestampOrNow(result.SentAt, s.clock.Now())}, nil
+	if result.Err != nil {
+		return &waappv1.SendTextMessageResponse{ProviderMessageId: providerID, SentAt: timestamp(result.SentAt), Error: ToProtoError(result.Err)}, nil
+	}
+	sentAt := result.SentAt
+	if sentAt.IsZero() {
+		sentAt = s.clock.Now()
+	}
+	if err := s.saveOutboundTextMessage(ctx, loginState, contactJID, providerID, text, sentAt); err != nil {
+		return &waappv1.SendTextMessageResponse{ProviderMessageId: providerID, SentAt: timestamppb.New(sentAt.UTC()), Error: ToProtoError(err)}, nil
+	}
+	return &waappv1.SendTextMessageResponse{ProviderMessageId: providerID, SentAt: timestamppb.New(sentAt.UTC())}, nil
 }
 
 func (s *Server) textMessageContactJID(ctx context.Context, accountID string, contactRef string) string {
@@ -95,4 +107,71 @@ func (s *Server) textMessageRunner(ctx context.Context, requestContext *waappv1.
 		Mode:          DynamicProxySessionModeSticky,
 	})
 	return proxied, release, nil
+}
+
+func (s *Server) saveOutboundTextMessage(ctx context.Context, loginState *waappv1.LoginState, contactJID string, providerID string, text string, sentAt time.Time) error {
+	session, err := s.outboundMessageSession(ctx, loginState, sentAt)
+	if err != nil {
+		return err
+	}
+	messageID := outboundMessageID(session.GetWaAccountId(), providerID)
+	message := &waappv1.InboundMessage{
+		MessageId:         messageID,
+		MessageSessionId:  session.GetMessageSessionId(),
+		Kind:              waappv1.InboundMessageKind_INBOUND_MESSAGE_KIND_MESSAGE,
+		EncryptionState:   waappv1.MessageEncryptionState_MESSAGE_ENCRYPTION_STATE_DECRYPTED,
+		AckStatus:         waappv1.MessageAckStatus_MESSAGE_ACK_STATUS_PENDING,
+		ContactRef:        contactJID,
+		PayloadRef:        "outbound:" + providerID,
+		ProviderMessageId: providerID,
+		ProviderTimestamp: timestamppb.New(sentAt.UTC()),
+		ReceivedAt:        timestamppb.New(sentAt.UTC()),
+		DeleteStatus:      waappv1.MessageDeleteStatus_MESSAGE_DELETE_STATUS_NOT_DELETED,
+		Direction:         waappv1.AccountMessageDirection_ACCOUNT_MESSAGE_DIRECTION_OUTBOUND,
+		Source:            waappv1.AccountMessageSource_ACCOUNT_MESSAGE_SOURCE_LOCAL_SEND,
+	}
+	if err := s.saveInboundMessagesForSession(ctx, session, []*waappv1.InboundMessage{message}); err != nil {
+		return err
+	}
+	return s.store.SaveDecryptedMessage(ctx, &waappv1.DecryptedMessage{
+		DecryptedMessageId: "wadec_" + stableID(messageID+":outbound"),
+		MessageId:          messageID,
+		Status:             waappv1.DecryptionStatus_DECRYPTION_STATUS_DECRYPTED,
+		PlaintextRef:       "outbound:" + messageID,
+		PlaintextText:      sensitiveOutput(text, "outbound-message", true),
+		DecryptedAt:        timestamppb.New(sentAt.UTC()),
+	})
+}
+
+func (s *Server) outboundMessageSession(ctx context.Context, loginState *waappv1.LoginState, now time.Time) (*waappv1.MessageSession, error) {
+	if s.longConnections != nil {
+		if sessionID := s.longConnections.MessageSessionID(loginState); sessionID != "" {
+			if session, err := s.store.GetMessageSession(ctx, sessionID); err == nil {
+				return session, nil
+			}
+		}
+	}
+	profile, err := s.store.GetClientProfile(ctx, loginState.GetClientProfileId())
+	if err != nil {
+		return nil, err
+	}
+	session := &waappv1.MessageSession{
+		MessageSessionId:     s.ids.NewID("wasess_"),
+		WaAccountId:          loginState.GetWaAccountId(),
+		ClientProfileId:      loginState.GetClientProfileId(),
+		RegisteredIdentityId: loginState.GetRegisteredIdentityId(),
+		ProtocolProfileId:    profile.GetProtocolProfileId(),
+		Status:               waappv1.MessageSessionStatus_MESSAGE_SESSION_STATUS_CLOSED,
+		OpenedAt:             timestamppb.New(now.UTC()),
+		LastSeenAt:           timestamppb.New(now.UTC()),
+		ClosedAt:             timestamppb.New(now.UTC()),
+	}
+	if err := s.store.SaveMessageSession(ctx, session); err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+func outboundMessageID(accountID string, providerID string) string {
+	return "wamsg_" + stableID(strings.Join([]string{accountID, providerID, "outbound"}, ":"))
 }

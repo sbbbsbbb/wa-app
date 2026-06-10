@@ -82,6 +82,7 @@ enum AccountMessageSource {
   ACCOUNT_MESSAGE_SOURCE_UNSPECIFIED = 0;
   ACCOUNT_MESSAGE_SOURCE_LONG_CONNECTION = 1;
   ACCOUNT_MESSAGE_SOURCE_IMPORTED_HISTORY = 2;
+  ACCOUNT_MESSAGE_SOURCE_LOCAL_SEND = 3;
 }
 
 enum LongConnectionStatus {
@@ -123,6 +124,8 @@ message InboundMessage {
   google.protobuf.Timestamp read_at = 13;
   MessageDeleteStatus delete_status = 14;
   google.protobuf.Timestamp deleted_at = 15;
+  AccountMessageDirection direction = 16;
+  AccountMessageSource source = 17;
 }
 
 message AccountMessage {
