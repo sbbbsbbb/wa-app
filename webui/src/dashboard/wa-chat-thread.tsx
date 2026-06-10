@@ -1,11 +1,13 @@
+import { useState } from 'react';
+import type { FormEvent } from 'react';
 import { AssistantRuntimeProvider, MessagePrimitive, ThreadPrimitive, useExternalStoreRuntime, useMessage, type AppendMessage } from '@assistant-ui/react';
-import { Copy, Loader2, Trash2 } from 'lucide-react';
+import { Copy, Loader2, Send, Trash2 } from 'lucide-react';
 import { WhatsAppIcon } from './wa-brand-icon';
 import { toAssistantMessage, type WaChatEvent, type WaChatMeta, type WaContact } from './wa-chat-model';
 import { WaMessageContent } from './wa-message-content';
-import { Badge, Button } from './ui';
+import { Badge, Button, Input } from './ui';
 
-export function WaChatThread({ contact, events, loading, error, onDeleteMessage }: { contact?: WaContact; events: WaChatEvent[]; loading: boolean; error?: string; onDeleteMessage: (messageID: string) => void }) {
+export function WaChatThread({ contact, events, loading, sending, error, onSendMessage, onDeleteMessage }: { contact?: WaContact; events: WaChatEvent[]; loading: boolean; sending: boolean; error?: string; onSendMessage: (text: string) => Promise<unknown>; onDeleteMessage: (messageID: string) => void }) {
   const runtime = useExternalStoreRuntime<WaChatEvent>({ messages: events, convertMessage: toAssistantMessage, isDisabled: true, isLoading: loading, onNew: noopNewMessage });
   const title = contact?.title || '选择联系人';
   return (
@@ -21,7 +23,7 @@ export function WaChatThread({ contact, events, loading, error, onDeleteMessage 
           </ThreadPrimitive.Root>
         </AssistantRuntimeProvider>
       </div>
-      <footer className={`border-t border-border px-5 py-3 text-xs ${error ? 'text-destructive' : 'text-muted-foreground'}`}>{error || '只读消息流；发送接口待接入。'}</footer>
+      <ChatComposer disabled={!contact || sending} error={error} onSendMessage={onSendMessage} />
     </section>
   );
 }
@@ -74,6 +76,30 @@ function CopyButton({ text }: { text: string }) {
 
 function DeleteButton({ messageID, onDeleteMessage }: { messageID: string; onDeleteMessage: (messageID: string) => void }) {
   return <Button className="rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive" variant="ghost" size="icon-sm" type="button" title="删除" aria-label="删除" onClick={() => onDeleteMessage(messageID)}><Trash2 size={14} /></Button>;
+}
+
+function ChatComposer({ disabled, error, onSendMessage }: { disabled: boolean; error?: string; onSendMessage: (text: string) => Promise<unknown> }) {
+  const [text, setText] = useState('');
+  const trimmed = text.trim();
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!trimmed || disabled) return;
+    try {
+      await onSendMessage(trimmed);
+      setText('');
+    } catch {
+      // React Query surfaces the error in the thread footer.
+    }
+  }
+  return (
+    <footer className="border-t border-border px-5 py-3">
+      <form className="flex items-center gap-2" onSubmit={(event) => void submit(event)}>
+        <Input value={text} onChange={(event) => setText(event.target.value)} disabled={disabled} placeholder={disabled ? '选择联系人后发送' : '输入消息'} aria-label="消息内容" autoComplete="off" />
+        <Button size="icon" type="submit" disabled={disabled || !trimmed} title="发送" aria-label="发送"><Send size={16} /></Button>
+      </form>
+      <p className={`mt-2 text-xs ${error ? 'text-destructive' : 'text-muted-foreground'}`}>{error || '仅支持已有 Signal 会话的 1:1 文本消息。'}</p>
+    </footer>
+  );
 }
 
 function EmptyConversation({ title }: { title: string }) {

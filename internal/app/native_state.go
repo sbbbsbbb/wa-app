@@ -93,6 +93,7 @@ type nativeSignalSession struct {
 	RootKey              string                         `json:"root_key,omitempty"`
 	SenderRatchetPublic  string                         `json:"sender_ratchet_public,omitempty"`
 	SenderRatchetPrivate string                         `json:"sender_ratchet_private,omitempty"`
+	SenderChain          *nativeSenderChain             `json:"sender_chain,omitempty"`
 	ReceiverChains       map[string]nativeReceiverChain `json:"receiver_chains,omitempty"`
 	PreviousCounter      *int                           `json:"previous_counter,omitempty"`
 	RemoteRegistrationID *int                           `json:"remote_registration_id,omitempty"`
@@ -122,6 +123,12 @@ type nativeReceiverChain struct {
 	ChainKey   string `json:"chain_key"`
 	Index      int    `json:"index"`
 	RootKey    string `json:"root_key,omitempty"`
+}
+
+type nativeSenderChain struct {
+	RatchetKey string `json:"ratchet_key"`
+	ChainKey   string `json:"chain_key"`
+	Index      int    `json:"index"`
 }
 
 type nativeMessagePayload struct {

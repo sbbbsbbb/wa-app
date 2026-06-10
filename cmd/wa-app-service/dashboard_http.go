@@ -59,6 +59,7 @@ func runDashboardHTTP(ctx context.Context, listenAddr, staticDir string, service
 	mux.HandleFunc("/api/wa/account-otp-messages", server.handleAccountOTPMessages)
 	mux.HandleFunc("/api/wa/messages/read", server.handleMarkMessagesRead)
 	mux.HandleFunc("/api/wa/messages/delete", server.handleDeleteMessages)
+	mux.HandleFunc("/api/wa/messages/send", server.handleSendTextMessage)
 	mux.HandleFunc("/api/wa/messages", server.handleMessages)
 	mux.HandleFunc("/api/wa/contacts/resolve", server.handleResolveContacts)
 	mux.HandleFunc("/api/wa/contacts/", server.handleContactResource)
@@ -347,6 +348,33 @@ func (s *dashboardHTTP) handleDeleteMessages(w http.ResponseWriter, r *http.Requ
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "delete WA messages failed"})
+		return
+	}
+	writeProtoJSON(w, http.StatusOK, resp)
+}
+
+func (s *dashboardHTTP) handleSendTextMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if s.service == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "wa-app service is not configured"})
+		return
+	}
+	payload, ok := readJSONPayload(w, r)
+	if !ok {
+		return
+	}
+	resp, err := s.service.SendTextMessage(r.Context(), &waappv1.SendTextMessageRequest{
+		Context:         &waappv1.RequestContext{RequestId: firstNonEmpty(textField(payload, "request_id"), newRequestID("wa-message-send"))},
+		WaAccountId:     textField(payload, "wa_account_id"),
+		ContactRef:      textField(payload, "contact_ref"),
+		Text:            &waappv1.SensitiveText{Value: textField(payload, "text")},
+		ClientMessageId: textField(payload, "client_message_id"),
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "send WA text message failed"})
 		return
 	}
 	writeProtoJSON(w, http.StatusOK, resp)
