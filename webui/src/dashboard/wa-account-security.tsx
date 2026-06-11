@@ -4,7 +4,7 @@ import { useMutation } from '@tanstack/react-query';
 import { AccountSettingsOperationStatus } from '../proto/byte/v/forge/waapp/v1/account_settings';
 import type { WaAccountProjection } from './wa-api';
 import { requestWaAccountEmailOtp, setWaAccountEmail, setWaTwoFactorAuthSettings, verifyWaAccountEmailOtp } from './wa-api';
-import { Badge, Button, Field, FieldDescription, FieldGroup, FieldLabel, Input } from './ui';
+import { Badge, Button, Field, FieldGroup, FieldLabel, Input } from './ui';
 
 type Props = { account: WaAccountProjection; onDone: (message: string) => void; onError: (message: string) => void };
 
@@ -13,14 +13,42 @@ export function WaAccountSecurityPanel({ account, onDone, onError }: Props) {
   const [email, setEmail] = useState('');
   const [idToken, setIdToken] = useState('');
   const [emailOtp, setEmailOtp] = useState('');
+  const [emailOtpVisible, setEmailOtpVisible] = useState(false);
   const [lastStatus, setLastStatus] = useState<AccountSettingsOperationStatus | undefined>();
   const handleError = (error: unknown) => onError(error instanceof Error ? error.message : String(error));
   const handleSuccess = (message: string, status?: AccountSettingsOperationStatus) => { setLastStatus(status); onDone(message); };
   const twoFactor = useMutation({ mutationFn: () => setWaTwoFactorAuthSettings(account, pin), onSuccess: (resp) => { setPin(''); handleSuccess('2FA PIN 设置请求已提交', resp.operation?.status); }, onError: handleError });
-  const emailSet = useMutation({ mutationFn: () => setWaAccountEmail(account, { email_address: email, google_id_token: idToken }), onSuccess: (resp) => { setIdToken(''); handleSuccess('账户邮箱设置请求已提交', resp.operation?.status); }, onError: handleError });
-  const otpRequest = useMutation({ mutationFn: () => requestWaAccountEmailOtp(account), onSuccess: (resp) => handleSuccess('邮箱 OTP 已请求', resp.operation?.status), onError: handleError });
-  const otpVerify = useMutation({ mutationFn: () => verifyWaAccountEmailOtp(account, emailOtp), onSuccess: (resp) => { setEmailOtp(''); handleSuccess('邮箱 OTP 校验请求已提交', resp.operation?.status); }, onError: handleError });
+  const emailSet = useMutation({
+    mutationFn: () => setWaAccountEmail(account, { email_address: email, google_id_token: idToken }),
+    onSuccess: (resp) => {
+      const status = resp.operation?.status;
+      setIdToken('');
+      setEmailOtpVisible(shouldShowEmailOtp(status));
+      if (status === AccountSettingsOperationStatus.ACCOUNT_SETTINGS_OPERATION_STATUS_VERIFIED) setEmailOtp('');
+      handleSuccess('账户邮箱设置请求已提交', status);
+    },
+    onError: handleError,
+  });
+  const otpRequest = useMutation({
+    mutationFn: () => requestWaAccountEmailOtp(account),
+    onSuccess: (resp) => {
+      setEmailOtpVisible(true);
+      handleSuccess('邮箱 OTP 已请求', resp.operation?.status);
+    },
+    onError: handleError,
+  });
+  const otpVerify = useMutation({
+    mutationFn: () => verifyWaAccountEmailOtp(account, emailOtp),
+    onSuccess: (resp) => {
+      const status = resp.operation?.status;
+      setEmailOtp('');
+      setEmailOtpVisible(shouldShowEmailOtp(status));
+      handleSuccess('邮箱 OTP 校验请求已提交', status);
+    },
+    onError: handleError,
+  });
   const busy = twoFactor.isPending || emailSet.isPending || otpRequest.isPending || otpVerify.isPending;
+  const handleEmailChange = (value: string) => { setEmail(value); setEmailOtp(''); setEmailOtpVisible(false); };
   return (
     <section className="grid gap-5">
       <div className="flex items-center justify-end"><Badge variant="outline">{statusLabel(lastStatus)}</Badge></div>
@@ -31,15 +59,34 @@ export function WaAccountSecurityPanel({ account, onDone, onError }: Props) {
         </form>
         <form className="grid gap-3" onSubmit={(event) => submit(event, emailSet.mutate)}>
           <div className="inline-flex items-center gap-2 text-sm font-medium"><Mail size={15} />设置账户邮箱</div>
-          <FieldGroup><Field><FieldLabel>邮箱地址</FieldLabel><Input value={email} onChange={(event) => setEmail(event.target.value)} type="email" disabled={busy} /></Field><Field><FieldLabel>Google ID token</FieldLabel><Input value={idToken} onChange={(event) => setIdToken(event.target.value)} type="password" placeholder="可选" disabled={busy} /></Field><FieldDescription>如服务端需要验证，可继续请求邮箱 OTP。</FieldDescription><Button type="submit" disabled={busy || !email}><Mail size={14} />提交邮箱</Button></FieldGroup>
+          <FieldGroup>
+            <Field><FieldLabel>邮箱地址</FieldLabel><Input value={email} onChange={(event) => handleEmailChange(event.target.value)} type="email" disabled={busy} /></Field>
+            <Field><FieldLabel>Google ID token</FieldLabel><Input value={idToken} onChange={(event) => setIdToken(event.target.value)} type="password" placeholder="可选" disabled={busy} /></Field>
+            <Button type="submit" disabled={busy || !email}><Mail size={14} />提交邮箱</Button>
+          </FieldGroup>
         </form>
-        <div className="grid gap-3 border-t border-border pt-5 lg:col-span-2"><div className="flex items-center gap-2 text-sm font-medium"><Send size={15} />邮箱 OTP</div><div className="grid gap-3 sm:grid-cols-[auto_1fr_auto]"><Button type="button" variant="outline" disabled={busy} onClick={() => otpRequest.mutate()}><Send size={14} />请求 OTP</Button><Input value={emailOtp} onChange={(event) => setEmailOtp(event.target.value)} inputMode="numeric" autoComplete="one-time-code" type="password" maxLength={6} disabled={busy} placeholder="6 位验证码" /><Button type="button" disabled={busy || emailOtp.length !== 6} onClick={() => otpVerify.mutate()}><CheckCircle2 size={14} />校验 OTP</Button></div></div>
+        {emailOtpVisible && (
+          <div className="grid gap-3 border-t border-border pt-5 lg:col-span-2">
+            <div className="flex items-center gap-2 text-sm font-medium"><Send size={15} />邮箱 OTP</div>
+            <div className="grid gap-3 sm:grid-cols-[auto_1fr_auto]">
+              <Button type="button" variant="outline" disabled={busy} onClick={() => otpRequest.mutate()}><Send size={14} />请求 OTP</Button>
+              <Input value={emailOtp} onChange={(event) => setEmailOtp(event.target.value)} inputMode="numeric" autoComplete="one-time-code" type="password" maxLength={6} disabled={busy} placeholder="6 位验证码" />
+              <Button type="button" disabled={busy || emailOtp.length !== 6} onClick={() => otpVerify.mutate()}><CheckCircle2 size={14} />校验 OTP</Button>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
 function submit(event: FormEvent<HTMLFormElement>, run: () => void) { event.preventDefault(); run(); }
+
+function shouldShowEmailOtp(status?: AccountSettingsOperationStatus) {
+  return status === AccountSettingsOperationStatus.ACCOUNT_SETTINGS_OPERATION_STATUS_NEEDS_VERIFICATION
+    || status === AccountSettingsOperationStatus.ACCOUNT_SETTINGS_OPERATION_STATUS_WAITING
+    || status === AccountSettingsOperationStatus.ACCOUNT_SETTINGS_OPERATION_STATUS_CODE_MISMATCH;
+}
 
 function statusLabel(status?: AccountSettingsOperationStatus) {
   switch (status) {
