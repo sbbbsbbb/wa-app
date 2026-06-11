@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Info, Loader2, PanelLeftClose, Plus, Search } from 'lucide-react';
+import { Info, Loader2, PanelLeftClose, PanelLeftOpen, Plus, Search } from 'lucide-react';
 import { Link, NavLink } from 'react-router';
 import type { LongConnectionState } from '../proto/byte/v/forge/waapp/v1/messaging';
 import type { WAAccount } from '../proto/byte/v/forge/waapp/v1/profile';
@@ -36,6 +36,7 @@ type RailProps = { accounts: WAAccount[]; selectedID: string; avatarVersion: str
 type AccountItemProps = { account: WAAccount; selected: boolean; avatarVersion: string; connection?: LongConnectionState; loading: boolean };
 
 const collapsedIconButtonClass = 'group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-12! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0!';
+const collapsedAccountButtonClass = 'group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:h-14! group-data-[collapsible=icon]:w-12! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0!';
 const collapsedTextClass = 'group-data-[collapsible=icon]:hidden';
 
 export function WaAccountRail({ accounts, selectedID, avatarVersion, connections, loading, connectionsLoading, hasNextPage, loadingMore, onLoadMore }: RailProps) {
@@ -79,7 +80,7 @@ export function WaAccountRail({ accounts, selectedID, avatarVersion, connections
 function RailBrand({ count }: { count: number }) {
   const { state, toggleSidebar } = useSidebar();
   if (state === 'collapsed') {
-    return <SidebarMenuButton size="lg" tooltip="展开账号栏" aria-label="展开账号栏" className={collapsedIconButtonClass} onClick={toggleSidebar}><WhatsAppIcon className="size-9!" /></SidebarMenuButton>;
+    return <SidebarMenuButton size="lg" tooltip="展开账号栏" aria-label="展开账号栏" className={collapsedIconButtonClass} onClick={toggleSidebar}><PanelLeftOpen className="size-6!" /></SidebarMenuButton>;
   }
   return (
     <div className="flex h-12 items-center gap-2 rounded-md px-2">
@@ -106,7 +107,7 @@ function AccountItem({ account, selected, avatarVersion, connection, loading }: 
   const avatarSize = state === 'collapsed' ? 'lg' : 'xs';
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton asChild size="lg" isActive={selected} tooltip={title} className={`h-14 ${collapsedIconButtonClass}`}>
+      <SidebarMenuButton asChild size="lg" isActive={selected} tooltip={title} className={`h-14 ${collapsedAccountButtonClass}`}>
         <NavLink to={waChatsPath(id)} title={title} aria-label={title}>
           <span className="relative shrink-0">
             <WaAccountAvatar account={account} version={avatarVersion} size={avatarSize} />
