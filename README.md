@@ -44,8 +44,4 @@ PostgreSQL 和 Redis 都是可选组件。需要启用时，在 `docker-compose.
 
 ## 友情链接
 
-- [GitHub 仓库](https://github.com/pood1e/wa-app)
-- [NOTICE](./NOTICE)
-- [Docker Compose 示例](./docker-compose.yml)
-- [环境变量示例](./.env.example)
 - [LINUX DO - 新的理想型社区](https://linux.do/)
