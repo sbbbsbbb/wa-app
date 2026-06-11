@@ -141,15 +141,7 @@ func buildSetAccountEmailIQ(id string, emailAddress string, googleIDToken string
 		children = append(children, chatdNode{Tag: "id_token", Content: googleIDToken})
 	}
 	children = append(children, chatdNode{Tag: "email_address", Content: emailAddress})
-	return buildAccountSettingsEmailIQ(id, []chatdNode{{Tag: "email", Content: children}})
-}
-
-func buildAccountSettingsEmailIQ(id string, children []chatdNode) chatdNode {
-	return chatdNode{
-		Tag:     "iq",
-		Attrs:   map[string]string{"to": "s.whatsapp.net", "id": id, "xmlns": "urn:xmpp:whatsapp:account"},
-		Content: children,
-	}
+	return buildAccountIQ(id, "set", []chatdNode{{Tag: "email", Content: children}})
 }
 
 func buildRequestAccountEmailOtpIQ(id string, language string, country string) chatdNode {
