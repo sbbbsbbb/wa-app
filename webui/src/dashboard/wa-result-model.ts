@@ -1,5 +1,5 @@
 import type { WaWorkflowResponse } from './wa-api';
-import { methodLabel, methodLabels } from './wa-result-labels';
+import { accountFlowLabel, accountReasonLabel, accountStatusLabel, methodLabel, methodLabels } from './wa-result-labels';
 import { compactJoin, extraValues, firstBool, firstNumber, firstText, record, statusIn } from './wa-result-normalize';
 export type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline';
 export type ResultTone = 'ok' | 'warn' | 'bad' | 'idle';
@@ -72,11 +72,10 @@ export function outcomeMeta(status: WaProbeStatus, result?: WaWorkflowResponse |
 export function metaItems(status: WaProbeStatus, result?: WaWorkflowResponse | null): MetaItem[] {
   const entries: MetaItem[] = [];
   if (status.requestFailed) {
-    addItem(entries, 'account_status', status.accountStatus, 'bad');
-    addItem(entries, 'account_flow', status.accountFlow, 'bad');
-    addItem(entries, 'raw_status', status.accountRawStatus, 'bad');
-    addItem(entries, 'raw_reason', status.accountRawReason, 'bad');
-    addItem(entries, 'account_error', status.accountError || status.rejectReason || result?.error_message || '', 'bad');
+    addItem(entries, '账号状态', accountStatusLabel(status.accountStatus || status.accountRawStatus), 'bad');
+    addItem(entries, '处理阶段', accountFlowLabel(status.accountFlow), 'bad');
+    addItem(entries, 'WA 反馈', accountReasonLabel(status.accountRawReason, status.accountError, status.rejectReason, result?.error_message), 'bad');
+    addItem(entries, '失败说明', accountReasonLabel(status.accountError, status.rejectReason, result?.error_message || result?.status), 'bad');
     addItem(entries, '代理', status.proxyText);
     return entries;
   }
@@ -91,8 +90,8 @@ function accountFeedback(status: WaProbeStatus) {
   const raw = compactJoin([status.accountStatus, status.accountRawStatus, status.accountRawReason, status.accountError], ' / ');
   const normalized = raw.toLowerCase();
   if (!raw) return '';
-  if (normalized.includes('account_probe_status_rejected') || normalized.includes('invalid_skey') || normalized.includes('bad_token')) return extraValues(status.accountStatus, status.accountRawStatus, status.accountRawReason, status.accountError).join(' / ') || raw;
-  return extraValues(status.accountStatus, status.accountRawStatus, status.accountRawReason, status.accountError).join(' / ');
+  if (normalized.includes('account_probe_status_rejected') || normalized.includes('invalid_skey') || normalized.includes('bad_token')) return accountReasonLabel(status.accountStatus, status.accountRawStatus, status.accountRawReason, status.accountError);
+  return accountReasonLabel(...extraValues(status.accountStatus, status.accountRawStatus, status.accountRawReason, status.accountError));
 }
 function blockedSignal(...values: unknown[]) {
   const normalized = values.map(firstText).join(' ').toLowerCase();

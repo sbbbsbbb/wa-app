@@ -8,6 +8,7 @@ import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui
 import { Input } from '@/components/ui/input';
 import { probeWaPhoneSMS, registerWaPhone, submitWaRegistrationOTP, type WaWorkflowResponse } from './wa-api';
 import { WhatsAppIcon } from './wa-brand-icon';
+import { accountReasonLabel } from './wa-result-labels';
 import { waProbeCanStartRegistration, waProbeStatus } from './wa-result-model';
 import { WaResultPanel } from './wa-result-panel';
 import { resolveWaPhoneTarget, type WaResolvedPhone } from './wa-utils';
@@ -78,7 +79,7 @@ export function WaAccountAdd({ disabled, onChanged, onDone, onError }: Props) {
     setBusy(true);
     try {
       const result = await submitWaRegistrationOTP(pending.accountID, code);
-      if (result.success === false || result.error_message) throw new Error(result.error_message || result.status || 'OTP 提交失败');
+      if (result.success === false || result.error_message) throw new Error(accountReasonLabel(result.error_message, result.status) || 'OTP 提交失败');
       setOtp('');
       setPending(null);
       onDone('OTP 已提交');
@@ -143,7 +144,7 @@ export function WaAccountAdd({ disabled, onChanged, onDone, onError }: Props) {
 }
 
 function registrationHelp(pending: boolean, canRegister: boolean, hasRegistrationResult: boolean, blocked: boolean) {
-  if (blocked) return 'WA 返回 blocked，前端已进入封禁状态；请停止重复请求，建议更换号码或注册通道。';
+  if (blocked) return 'WA 已拒绝该号码；请停止重复请求，建议更换号码或注册通道。';
   if (pending) return 'OTP 已发送，请在本页输入验证码完成注册。';
   if (hasRegistrationResult) return '本次注册请求已返回结果，可重新检测后再继续。';
   if (canRegister) return '检测通过，可以点击“发起注册”。';
@@ -162,8 +163,9 @@ function workflowText(result: WaWorkflowResponse, key: keyof WaWorkflowResponse)
 
 function registrationFailureMessage(result: WaWorkflowResponse, status: ReturnType<typeof waProbeStatus>) {
   const detail = status.failureReason || result.error_message || result.status || '';
+  const reason = accountReasonLabel(detail);
   if (status.blocked) return '号码被 WA 拒绝/封禁，先停止重试，建议更换号码或注册通道。';
-  if (status.accountFlow === 'invalid_number') return detail ? `号码格式被 WA 拒绝：${detail}` : '号码格式被 WA 拒绝，请检查国家拨号码和手机号。';
-  if (status.accountFlow === 'rate_limited') return detail ? `WA 注册请求处于冷却：${detail}` : 'WA 注册请求处于冷却，请稍后再试。';
-  return detail || 'WA 注册流程发起失败';
+  if (status.accountFlow === 'invalid_number') return reason || '号码格式被 WA 拒绝，请检查国家拨号码和手机号。';
+  if (status.accountFlow === 'rate_limited') return reason || 'WA 注册请求处于冷却，请稍后再试。';
+  return reason || 'WA 注册流程发起失败';
 }

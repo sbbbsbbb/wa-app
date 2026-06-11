@@ -1,3 +1,29 @@
+import { ClientProfileStatus, WAAccountStatus } from '../proto/byte/v/forge/waapp/v1/profile';
+
+export type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline';
+export type StatusTone = 'ok' | 'warn' | 'bad' | 'idle';
+export type StatusView = { label: string; variant: BadgeVariant; tone: StatusTone };
+
+export function waAccountStatusView(status?: WAAccountStatus): StatusView {
+  switch (status) {
+    case WAAccountStatus.WA_ACCOUNT_STATUS_ACTIVE: return { label: '正常', variant: 'default', tone: 'ok' };
+    case WAAccountStatus.WA_ACCOUNT_STATUS_PENDING_REGISTRATION: return { label: '等待验证码', variant: 'secondary', tone: 'warn' };
+    case WAAccountStatus.WA_ACCOUNT_STATUS_PAUSED: return { label: '已暂停', variant: 'outline', tone: 'idle' };
+    case WAAccountStatus.WA_ACCOUNT_STATUS_ARCHIVED: return { label: '已归档', variant: 'outline', tone: 'idle' };
+    default: return { label: '状态未知', variant: 'outline', tone: 'idle' };
+  }
+}
+
+export function clientProfileStatusView(status?: ClientProfileStatus): StatusView {
+  switch (status) {
+    case ClientProfileStatus.CLIENT_PROFILE_STATUS_READY: return { label: '可用', variant: 'default', tone: 'ok' };
+    case ClientProfileStatus.CLIENT_PROFILE_STATUS_PREPARING: return { label: '准备中', variant: 'secondary', tone: 'warn' };
+    case ClientProfileStatus.CLIENT_PROFILE_STATUS_REJECTED: return { label: '已拒绝', variant: 'destructive', tone: 'bad' };
+    case ClientProfileStatus.CLIENT_PROFILE_STATUS_RETIRED: return { label: '已停用', variant: 'outline', tone: 'idle' };
+    default: return { label: '状态未知', variant: 'outline', tone: 'idle' };
+  }
+}
+
 export function oldDeviceLabel(value?: boolean, flow?: string) {
   if (value === true || flow === 'registered') return '可用';
   if (flow === 'blocked') return '不可用';
@@ -55,6 +81,64 @@ export function methodLabel(value: string) {
   return normalized.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+export function accountFlowLabel(value?: string) {
+  switch (normalizeStatus(value)) {
+    case 'registered': return '旧设备可用';
+    case 'not_registered': return '无旧设备记录';
+    case 'blocked': return '号码被拒绝';
+    case 'invalid_number': return '号码格式异常';
+    case 'rate_limited': return '请求冷却中';
+    case 'probe_failed': return '检测失败';
+    case 'sms_route_unavailable': return '无可用短信通道';
+    case 'unknown': return '状态待确认';
+    case '': return '';
+    default: return '状态待确认';
+  }
+}
+
+export function accountStatusLabel(value?: string) {
+  switch (normalizeStatus(value)) {
+    case 'reachable':
+    case 'account_probe_status_reachable':
+    case 'exists':
+    case 'ok':
+    case 'sent':
+    case 'waiting': return '已受理';
+    case 'rejected':
+    case 'account_probe_status_rejected': return '请求被拒绝';
+    case 'fail':
+    case 'failed': return '请求失败';
+    case 'incorrect': return '校验未通过';
+    case '': return '';
+    default: return '状态待确认';
+  }
+}
+
+export function accountReasonLabel(...values: Array<string | undefined>) {
+  const normalized = normalizeStatus(values.filter(Boolean).join(' '));
+  if (!normalized) return '';
+  if (hasAny(normalized, ['format_wrong'])) return '号码格式不符合 WA 规则';
+  if (hasAny(normalized, ['length_short', 'length_long'])) return '号码长度不符合 WA 规则';
+  if (hasAny(normalized, ['blocked'])) return '号码被 WA 拒绝或封禁';
+  if (hasAny(normalized, ['too_recent', 'too_many', 'temporarily_unavailable', 'rate_limited', 'cooling_down'])) return '请求过于频繁，请稍后再试';
+  if (hasAny(normalized, ['no_routes', 'route_unavailable'])) return '暂无可用验证通道';
+  if (hasAny(normalized, ['invalid_skey', 'bad_token'])) return '注册会话已失效，请重新检测';
+  if (hasAny(normalized, ['missing_param', 'bad_param'])) return '请求参数被 WA 拒绝，请重新检测号码';
+  if (hasAny(normalized, ['old_version'])) return '当前客户端版本被 WA 拒绝';
+  if (hasAny(normalized, ['proxy', 'dynamic_ip', 'unreachable', 'network', 'eof'])) return '网络或代理出口异常';
+  if (hasAny(normalized, ['fail', 'failed', 'rejected'])) return '请求被 WA 拒绝';
+  if (hasAny(normalized, ['ok', 'sent', 'waiting'])) return '请求已受理';
+  return '远端返回未识别原因';
+}
+
 function textOf(value: unknown) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeStatus(value?: string) {
+  return (value || '').trim().toLowerCase().replace(/^wa_account_status_/, '').replace(/^client_profile_status_/, '');
+}
+
+function hasAny(value: string, needles: string[]) {
+  return needles.some((needle) => value.includes(needle));
 }

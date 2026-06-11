@@ -1,5 +1,5 @@
 import type { WaWorkflowResponse } from './wa-api';
-import { booleanLabel, methodStateLabel, oldDeviceLabel, smsLabel } from './wa-result-labels';
+import { accountFlowLabel, accountReasonLabel, booleanLabel, methodStateLabel, oldDeviceLabel, smsLabel } from './wa-result-labels';
 import { metaItems, outcomeMeta, waProbeStatus, type BadgeVariant, type ResultTone, type WaProbeStatus } from './wa-result-model';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -61,14 +61,14 @@ function waMetrics(status: WaProbeStatus): Array<{ label: string; value: string;
     return [
       { label: '封禁', value: '是', tone: 'bad' },
       { label: '请求', value: status.requestFailed ? '被拒绝' : '异常', tone: 'bad' },
-      { label: '原因', value: status.failureReason || status.accountRawReason || 'blocked', tone: 'bad' },
+      { label: '原因', value: accountReasonLabel(status.failureReason, status.accountRawReason) || '号码被 WA 拒绝或封禁', tone: 'bad' },
     ];
   }
   if (status.requestFailed) {
     return [
       { label: '请求', value: '失败', tone: 'bad' },
-      { label: 'raw_status', value: status.accountRawStatus || '-', tone: 'bad' },
-      { label: 'raw_reason', value: status.accountRawReason || '-', tone: 'bad' },
+      { label: '阶段', value: accountFlowLabel(status.accountFlow) || '状态待确认', tone: 'bad' },
+      { label: '原因', value: accountReasonLabel(status.accountRawReason, status.failureReason, status.accountRawStatus) || '请求被 WA 拒绝', tone: 'bad' },
     ];
   }
   return [

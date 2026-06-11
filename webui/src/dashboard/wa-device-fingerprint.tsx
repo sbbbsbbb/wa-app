@@ -1,6 +1,7 @@
 import { Cpu, Fingerprint, Loader2, Smartphone } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { ClientProfile, DeviceFingerprint } from '../proto/byte/v/forge/waapp/v1/profile';
+import { clientProfileStatusView } from './wa-result-labels';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table';
@@ -13,12 +14,13 @@ export function WaDeviceFingerprintPanel({ profiles, loading }: { profiles: Clie
 
 function ProfileBlock({ profile }: { profile: ClientProfile }) {
   const fp = profile.device_fingerprint;
+  const status = clientProfileStatusView(profile.status);
   return (
     <Card size="sm">
       <CardHeader>
         <CardTitle className="text-sm">{deviceTitle(fp)}</CardTitle>
         <CardDescription className="truncate font-mono text-xs">{profile.client_profile_id}</CardDescription>
-        <CardAction><Badge variant="outline">{profile.status || 'UNKNOWN'}</Badge></CardAction>
+        <CardAction><Badge variant={status.variant}>{status.label}</Badge></CardAction>
       </CardHeader>
       <CardContent>{fp ? <FingerprintGrid fingerprint={fp} /> : <p className="text-sm text-muted-foreground">没有可展示的设备指纹。</p>}</CardContent>
     </Card>

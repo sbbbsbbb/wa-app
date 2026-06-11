@@ -6,6 +6,8 @@ import { submitWaRegistrationOTP, waAccountID } from './wa-api';
 import { WaAccountProfileSettings } from './wa-account-profile-settings';
 import { WaAccountSecurityPanel } from './wa-account-security';
 import { WaDeviceFingerprintPanel } from './wa-device-fingerprint';
+import { accountReasonLabel, waAccountStatusView, type StatusView } from './wa-result-labels';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -64,7 +66,7 @@ function ManualOtpSubmit({ account, busy, onDone, onError }: { account: WAAccoun
   async function submit() {
     try {
       const resp = await submitWaRegistrationOTP(account, otp);
-      if (resp.error_message || resp.success === false) throw new Error(resp.error_message || 'OTP 提交失败');
+      if (resp.error_message || resp.success === false) throw new Error(accountReasonLabel(resp.error_message, resp.status) || 'OTP 提交失败');
       setOtp('');
       onDone('OTP 已提交');
     } catch (error) {
@@ -87,26 +89,37 @@ function ManualOtpSubmit({ account, busy, onDone, onError }: { account: WAAccoun
 }
 
 function InfoGrid({ account }: { account: WAAccount }) {
-  const rows = [
-    ['名称', account.display_name?.trim() || '-'],
-    ['账号 ID', waAccountID(account)],
-    ['状态', account.status || '-'],
-    ['手机号', account.phone?.e164_number || '-'],
-    ['国家', account.phone?.country_iso2 || '-'],
-    ['拨号码', account.phone?.country_calling_code || '-'],
-    ['创建时间', formatTime(account.audit?.created_at)],
-    ['更新时间', formatTime(account.audit?.updated_at)],
+  const rows: Array<{ label: string; value: ReactNode }> = [
+    { label: '名称', value: account.display_name?.trim() || '-' },
+    { label: '账号 ID', value: waAccountID(account) },
+    { label: '状态', value: <StatusBadge view={waAccountStatusView(account.status)} /> },
+    { label: '手机号', value: account.phone?.e164_number || '-' },
+    { label: '国家', value: account.phone?.country_iso2 || '-' },
+    { label: '拨号码', value: account.phone?.country_calling_code || '-' },
+    { label: '创建时间', value: formatTime(account.audit?.created_at) },
+    { label: '更新时间', value: formatTime(account.audit?.updated_at) },
   ];
-  return <Table><TableBody>{rows.map(([label, value]) => <InfoRow key={label} label={label} value={value} />)}</TableBody></Table>;
+  return <Table><TableBody>{rows.map((row) => <InfoRow key={row.label} label={row.label} value={row.value} />)}</TableBody></Table>;
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function InfoRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <TableRow className="hover:bg-transparent">
       <TableCell className="w-24 text-muted-foreground">{label}</TableCell>
-      <TableCell className="max-w-0 truncate font-mono text-xs">{value}</TableCell>
+      <TableCell className="max-w-0 truncate">{typeof value === 'string' ? <span className="font-mono text-xs">{value}</span> : value}</TableCell>
     </TableRow>
   );
+}
+
+function StatusBadge({ view }: { view: StatusView }) {
+  return <Badge variant={view.variant} className="gap-1.5"><span className={`size-1.5 rounded-full ${statusDotClass(view.tone)}`} />{view.label}</Badge>;
+}
+
+function statusDotClass(tone: StatusView['tone']) {
+  if (tone === 'ok') return 'bg-emerald-500';
+  if (tone === 'warn') return 'bg-amber-500';
+  if (tone === 'bad') return 'bg-destructive';
+  return 'bg-muted-foreground/50';
 }
 
 function formatTime(value?: string) {
