@@ -159,11 +159,15 @@ function deriveAccountFlow(input: { registered?: boolean; blocked?: boolean; sms
   return 'unknown';
 }
 
-export function waProbeCanStartRegistration(result?: WaWorkflowResponse | null) {
+export function waProbeCanStartRegistration(result?: WaWorkflowResponse | null, method = 'VERIFICATION_DELIVERY_METHOD_SMS') {
   const status = waProbeStatus(result);
+  const selectedMethod = methodLabel(method);
+  const methodAvailable = selectedMethod === 'SMS'
+    ? status.smsAvailable === true
+    : status.methodStatuses.some((item) => item.label === selectedMethod && item.available === true && !(item.cooldownSeconds && item.cooldownSeconds > 0));
   return Boolean(result)
     && !status.requestFailed
-    && status.smsAvailable === true
+    && methodAvailable
     && status.accountReachable !== false
     && status.blocked !== true
     && status.accountFlow !== 'invalid_number'

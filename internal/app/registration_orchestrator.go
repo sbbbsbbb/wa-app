@@ -44,11 +44,12 @@ func (s *Server) StartRegistration(ctx context.Context, payload map[string]any) 
 		}
 	}()
 	phone := normalizePhone(phoneFromAction(basePayload))
-	probeResult := runner.probeAccountWithState(ctx, EngineRegistrationInput{AppVersion: defaultWAAppVersion, Phone: phone, DeliveryMethod: waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS}, state)
-	if !registrationProbeAllowsSMS(probeResult) {
+	method := registrationMethodFromPayload(basePayload)
+	probeResult := runner.probeAccountWithState(ctx, EngineRegistrationInput{AppVersion: defaultWAAppVersion, Phone: phone, DeliveryMethod: method}, state)
+	if !registrationProbeAllowsMethod(probeResult, method) {
 		return rejectedRegistrationResult(basePayload, registrationProbeFailureMap(probeResult, route, managedRoute)), nil
 	}
-	codeResult, updatedState := runner.requestVerificationCodeWithState(ctx, EngineRegistrationInput{AppVersion: defaultWAAppVersion, Phone: phone, DeliveryMethod: waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS}, state)
+	codeResult, updatedState := runner.requestVerificationCodeWithState(ctx, EngineRegistrationInput{AppVersion: defaultWAAppVersion, Phone: phone, DeliveryMethod: method}, state)
 	if !verificationCodeRequestAccepted(codeResult) {
 		return rejectedRegistrationResult(basePayload, registrationRequestFailureMap(codeResult, route, managedRoute)), nil
 	}
@@ -56,7 +57,7 @@ func (s *Server) StartRegistration(ctx context.Context, payload map[string]any) 
 	if err != nil {
 		return nil, err
 	}
-	record := gateway.server.newVerificationCodeRequestRecord(account, profile, waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS, codeResult)
+	record := gateway.server.newVerificationCodeRequestRecord(account, profile, method, codeResult)
 	if err := gateway.server.store.SaveVerificationRequest(ctx, record); err != nil {
 		_ = gateway.discardRejectedRegistration(context.Background(), basePayload, waAccountID(account), record.GetVerificationRequestId())
 		return nil, err
@@ -89,6 +90,8 @@ func (s *Server) StartRegistration(ctx context.Context, payload map[string]any) 
 		"protocol_profile_id":     protocol.GetProtocolProfileId(),
 		"verification_request_id": verificationRequestID,
 		"verification_request":    protoMap(record),
+		"delivery_method":         method.String(),
+		"method":                  registrationMethodName(method, "sms"),
 		"registration_phase":      registrationPhase(true, verificationRequestID, durationFromProto(record.GetRetryAfter())),
 		"fingerprint_persistence": "COMMITTED",
 		"persisted":               true,
@@ -98,6 +101,18 @@ func (s *Server) StartRegistration(ctx context.Context, payload map[string]any) 
 		response["retry_after_seconds"] = seconds
 	}
 	return response, nil
+}
+
+func registrationMethodFromPayload(payload map[string]any) waappv1.VerificationDeliveryMethod {
+	method := registrationMethodFromName(firstNonEmpty(
+		textField(payload, "delivery_method"),
+		textField(payload, "verification_method"),
+		textField(payload, "method"),
+	))
+	if method == waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_UNSPECIFIED {
+		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS
+	}
+	return method
 }
 
 func cloneActionPayload(payload map[string]any) map[string]any {
@@ -122,8 +137,20 @@ func verificationCodeRequestAccepted(result EngineCodeResult) bool {
 	return result.Err == nil && (result.Status == waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_SENT || result.Status == waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_WAITING)
 }
 
-func registrationProbeAllowsSMS(result EngineProbeResult) bool {
-	return result.Err == nil && result.Status == waappv1.AccountProbeStatus_ACCOUNT_PROBE_STATUS_REACHABLE && result.CanSendSMS
+func registrationProbeAllowsMethod(result EngineProbeResult, method waappv1.VerificationDeliveryMethod) bool {
+	if result.Err != nil || result.Status != waappv1.AccountProbeStatus_ACCOUNT_PROBE_STATUS_REACHABLE {
+		return false
+	}
+	if method == waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_UNSPECIFIED ||
+		method == waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS {
+		return result.CanSendSMS
+	}
+	for _, status := range result.MethodStatuses {
+		if status.Method == method {
+			return status.Available
+		}
+	}
+	return false
 }
 
 func registrationRequestFailureMap(result EngineCodeResult, route DynamicProxyRoute, managedRoute bool) map[string]any {
@@ -228,6 +255,8 @@ func registrationProbeFailureMap(result EngineProbeResult, route DynamicProxyRou
 			"sms_available":      result.CanSendSMS,
 			"sms_status":         registrationProbeSMSStatus(result),
 			"sms_wait_seconds":   result.SMSWaitSeconds,
+			"supported_methods":  enumNames(result.SupportedMethods),
+			"method_statuses":    methodStatusMaps(result.MethodStatuses),
 		},
 	}
 	if result.SMSWaitSeconds > 0 {
@@ -246,7 +275,7 @@ func registrationProbeError(result EngineProbeResult) error {
 	case result.Status != waappv1.AccountProbeStatus_ACCOUNT_PROBE_STATUS_REACHABLE:
 		return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_REJECTED, "account probe is not reachable", false)
 	default:
-		return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "SMS route unavailable", true)
+		return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "verification route unavailable", true)
 	}
 }
 

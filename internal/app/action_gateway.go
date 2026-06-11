@@ -168,7 +168,7 @@ func (g *actionGateway) requestSMSOTP(ctx context.Context, payload map[string]an
 		WaAccountId:       textField(payload, "wa_account_id"),
 		ClientProfileId:   textField(payload, "client_profile_id"),
 		ProtocolProfileId: textField(payload, "protocol_profile_id"),
-		DeliveryMethod:    waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS,
+		DeliveryMethod:    registrationMethodFromPayload(payload),
 	}, runner)
 	runner.CloseIdleConnections()
 	if err != nil {

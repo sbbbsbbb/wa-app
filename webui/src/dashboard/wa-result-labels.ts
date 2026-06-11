@@ -69,14 +69,26 @@ function formatSeconds(value: number) {
 }
 
 export function methodLabel(value: string) {
-  const normalized = value.trim().toUpperCase().replace(/^VERIFICATION_DELIVERY_METHOD_/, '');
+  const normalized = value.trim().toUpperCase().replace(/^VERIFICATION_DELIVERY_METHOD_/, '').replace(/^REGISTRATION_LOGIN_METHOD_/, '');
   if (!normalized || normalized === 'UNSPECIFIED') return '';
+  if (normalized === 'AUTOCONF') return '自动确认';
+  if (normalized === 'DEEPLINK_OTP') return 'Deep Link OTP';
   if (normalized === 'SEND_SMS' || normalized === 'SEND_SMS_TO_WA') return '发送 SMS 至 WA';
   if (normalized === 'SMS') return 'SMS';
   if (normalized === 'VOICE') return '语音';
   if (normalized === 'IN_APP_MESSAGE' || normalized === 'WA_OLD' || normalized === 'OLD_WA') return '旧设备';
   if (normalized === 'PASSKEY') return 'Passkey';
+  if (normalized === 'DISCOVERABLE_CREDENTIAL') return '可发现凭据';
+  if (normalized === 'SILENT_AUTH') return '静默验证';
+  if (normalized === 'SILENT_AUTH_TS43' || normalized === 'SILENT_AUTH_TS_43') return '静默验证 TS43';
   if (normalized === 'EMAIL' || normalized === 'EMAIL_OTP') return '邮箱';
+  if (normalized === 'OAUTH_EMAIL') return 'OAuth 邮箱';
+  if (normalized === 'ACCOUNT_TRANSFER' || normalized === 'ACC_TR') return '账号迁移';
+  if (normalized === 'RECAPTCHA') return 'reCAPTCHA';
+  if (normalized === 'TWO_FACTOR_PIN' || normalized === 'TWOFAC_PIN') return '两步验证 PIN';
+  if (normalized === 'PASSWORD') return '密码';
+  if (normalized === 'WIPE_FULL') return '完整重置';
+  if (normalized === 'WIPE_OFFLINE') return '离线重置';
   if (normalized === 'FLASH') return 'Flash';
   return normalized.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase());
 }

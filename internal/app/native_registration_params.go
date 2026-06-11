@@ -60,12 +60,18 @@ func registrationMethodName(method waappv1.VerificationDeliveryMethod, fallback 
 		return "flash"
 	case waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_EMAIL_OTP:
 		return "email_otp"
+	case waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SEND_SMS:
+		return "send_sms"
 	case waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_PASSKEY:
 		return "passkey"
 	case waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SILENT_AUTH:
 		return "silent_auth"
 	case waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SILENT_AUTH_TS43:
 		return "silent_auth_ts_43"
+	case waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_AUTOCONF:
+		return "autoconf"
+	case waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_DEEPLINK_OTP:
+		return "deeplink_otp"
 	case waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_RECAPTCHA:
 		return "recaptcha"
 	case waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_OAUTH_EMAIL:
@@ -83,7 +89,7 @@ func registrationMethodName(method waappv1.VerificationDeliveryMethod, fallback 
 
 func registrationMethodFromName(name string) waappv1.VerificationDeliveryMethod {
 	switch verificationMethodCode(name) {
-	case "send_sms", "sms":
+	case "sms":
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS
 	case "voice":
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_VOICE
@@ -93,12 +99,18 @@ func registrationMethodFromName(name string) waappv1.VerificationDeliveryMethod 
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_WA_OLD
 	case "email_otp":
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_EMAIL_OTP
+	case "send_sms":
+		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SEND_SMS
 	case "passkey":
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_PASSKEY
 	case "silent_auth":
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SILENT_AUTH
 	case "silent_auth_ts_43":
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SILENT_AUTH_TS43
+	case "autoconf":
+		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_AUTOCONF
+	case "deeplink_otp":
+		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_DEEPLINK_OTP
 	case "recaptcha":
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_RECAPTCHA
 	case "oauth_email":
@@ -320,7 +332,7 @@ func parseExistProbeResult(data map[string]any) EngineProbeResult {
 	registeredKnown := registered || invalidNumber
 	smsRouteUnavailable := existRouteUnavailableReason(reason)
 	canSendSMS := smsProbeAvailableByCooldownOnly(smsWait, smsWaitExhausted, blocked, protocolRejected, invalidNumber, rateLimited, smsRouteUnavailable)
-	methodStatuses = ensureSendSMSMethodStatus(methodStatuses, smsWait > 0 || smsWaitExhausted || canSendSMS, canSendSMS, smsWait)
+	methodStatuses = ensureSMSMethodStatus(methodStatuses, smsWait > 0 || smsWaitExhausted || canSendSMS, canSendSMS, smsWait)
 	methods := methodsFromStatuses(methodStatuses)
 	reachable := !protocolRejected && !blocked && !invalidNumber && !rateLimited && (existReachableStatus(status) || registered || notRegistered || status != "" || reason != "")
 	result := EngineProbeResult{
@@ -499,7 +511,7 @@ func methodsFromStatuses(statuses []VerificationMethodStatus) []waappv1.Verifica
 
 func verificationMethod(name string) waappv1.VerificationDeliveryMethod {
 	switch verificationMethodCode(name) {
-	case "send_sms", "sms":
+	case "sms":
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS
 	case "voice":
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_VOICE
@@ -509,12 +521,18 @@ func verificationMethod(name string) waappv1.VerificationDeliveryMethod {
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_WA_OLD
 	case "email_otp":
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_EMAIL_OTP
+	case "send_sms":
+		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SEND_SMS
 	case "passkey":
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_PASSKEY
 	case "silent_auth":
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SILENT_AUTH
 	case "silent_auth_ts_43":
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SILENT_AUTH_TS43
+	case "autoconf":
+		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_AUTOCONF
+	case "deeplink_otp":
+		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_DEEPLINK_OTP
 	case "recaptcha":
 		return waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_RECAPTCHA
 	case "oauth_email":
@@ -549,8 +567,13 @@ func verificationMethodStatuses(data map[string]any, methods []waappv1.Verificat
 }
 
 func verificationMethodCode(name string) string {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "send_sms", "sms":
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	normalized = strings.TrimPrefix(normalized, "verification_delivery_method_")
+	normalized = strings.TrimPrefix(normalized, "registration_login_method_")
+	switch normalized {
+	case "sms":
+		return "sms"
+	case "send_sms", "send-sms", "send_sms_to_wa", "send-sms-to-wa":
 		return "send_sms"
 	case "voice", "call", "phone_call":
 		return "voice"
@@ -566,6 +589,10 @@ func verificationMethodCode(name string) string {
 		return "silent_auth"
 	case "silent_auth_ts_43", "silent-auth-ts-43", "silent_auth_ts43":
 		return "silent_auth_ts_43"
+	case "autoconf", "auto_conf", "auto-confirm":
+		return "autoconf"
+	case "deeplink_otp", "deeplink-otp", "deep_link_otp":
+		return "deeplink_otp"
 	case "recaptcha":
 		return "recaptcha"
 	case "oauth_email", "oauth-email":
@@ -617,7 +644,7 @@ func verificationMethodVisibleForProbe(data map[string]any, code string) bool {
 		return eligibility != 0 && eligibility != 4
 	case "send_sms":
 		return true
-	case "voice", "flash", "passkey", "silent_auth", "silent_auth_ts_43", "recaptcha", "oauth_email", "discoverable_credential", "acc_tr", "standalone":
+	case "sms", "voice", "flash", "passkey", "silent_auth", "silent_auth_ts_43", "autoconf", "deeplink_otp", "recaptcha", "oauth_email", "discoverable_credential", "acc_tr", "standalone":
 		return true
 	case "email_otp":
 		eligibility, ok := firstPresentJSONInt64(data["pref_email_otp_eligibility"], data["email_otp_eligible"])
@@ -629,6 +656,8 @@ func verificationMethodVisibleForProbe(data map[string]any, code string) bool {
 
 func verificationCodeCooldownSeconds(data map[string]any, code string) int64 {
 	switch code {
+	case "sms":
+		return firstJSONWaitSeconds(data["sms_wait"], data["sms_wait_time"], data["sms_retry_after"], data["sms_retry_time"], data["pref_sms_wait_time"], data["EXTRA_SMS_RETRY_TIME"], data["retry_after"])
 	case "send_sms":
 		return firstJSONWaitSeconds(data["send_sms_wait"], data["send_sms_retry_after"], data["send_sms_retry_time"], data["pref_send_sms_wait_time"], data["EXTRA_SEND_SMS_RETRY_TIME"])
 	case "voice":
@@ -647,6 +676,10 @@ func verificationCodeCooldownSeconds(data map[string]any, code string) int64 {
 		return firstJSONWaitSeconds(data["passkey_wait"], data["passkey_retry_time"], data["EXTRA_PASSKEY_RETRY_TIME"], data["pref_passkey_wait_time"])
 	case "recaptcha":
 		return firstJSONWaitSeconds(data["recaptcha_wait"], data["recaptcha_retry_time"], data["EXTRA_RECAPTCHA_RETRY_TIME"], data["pref_recaptcha_wait_time"])
+	case "autoconf":
+		return firstJSONWaitSeconds(data["autoconf_wait"], data["autoconf_retry_time"], data["EXTRA_AUTOCONF_RETRY_TIME"], data["pref_autoconf_wait_time"])
+	case "deeplink_otp":
+		return firstJSONWaitSeconds(data["deeplink_otp_wait"], data["deeplink_otp_retry_time"], data["EXTRA_DEEPLINK_OTP_RETRY_TIME"], data["pref_deeplink_otp_wait_time"])
 	default:
 		return 0
 	}
@@ -654,6 +687,8 @@ func verificationCodeCooldownSeconds(data map[string]any, code string) int64 {
 
 func verificationCodeWaitExhausted(data map[string]any, code string) bool {
 	switch code {
+	case "sms":
+		return firstJSONWaitExhausted(data["sms_wait"], data["sms_wait_time"], data["sms_retry_after"], data["sms_retry_time"], data["pref_sms_wait_time"], data["EXTRA_SMS_RETRY_TIME"], data["retry_after"])
 	case "send_sms":
 		return firstJSONWaitExhausted(data["send_sms_wait"], data["send_sms_retry_after"], data["send_sms_retry_time"], data["pref_send_sms_wait_time"], data["EXTRA_SEND_SMS_RETRY_TIME"])
 	case "voice":
@@ -672,6 +707,10 @@ func verificationCodeWaitExhausted(data map[string]any, code string) bool {
 		return firstJSONWaitExhausted(data["passkey_wait"], data["passkey_retry_time"], data["EXTRA_PASSKEY_RETRY_TIME"], data["pref_passkey_wait_time"])
 	case "recaptcha":
 		return firstJSONWaitExhausted(data["recaptcha_wait"], data["recaptcha_retry_time"], data["EXTRA_RECAPTCHA_RETRY_TIME"], data["pref_recaptcha_wait_time"])
+	case "autoconf":
+		return firstJSONWaitExhausted(data["autoconf_wait"], data["autoconf_retry_time"], data["EXTRA_AUTOCONF_RETRY_TIME"], data["pref_autoconf_wait_time"])
+	case "deeplink_otp":
+		return firstJSONWaitExhausted(data["deeplink_otp_wait"], data["deeplink_otp_retry_time"], data["EXTRA_DEEPLINK_OTP_RETRY_TIME"], data["pref_deeplink_otp_wait_time"])
 	default:
 		return false
 	}
@@ -710,13 +749,13 @@ func smsProbeAvailableByCooldownOnly(smsWait int64, smsWaitExhausted bool, block
 	return smsWait <= 0 && !smsWaitExhausted && !blocked && !protocolRejected && !invalidNumber && !rateLimited && !routeUnavailable
 }
 
-func ensureSendSMSMethodStatus(statuses []VerificationMethodStatus, visible bool, available bool, cooldownSeconds int64) []VerificationMethodStatus {
+func ensureSMSMethodStatus(statuses []VerificationMethodStatus, visible bool, available bool, cooldownSeconds int64) []VerificationMethodStatus {
 	if !visible {
 		return statuses
 	}
 	for i := range statuses {
-		if statuses[i].Code == "send_sms" || statuses[i].Method == waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS {
-			statuses[i].Code = "send_sms"
+		if statuses[i].Code == "sms" || statuses[i].Method == waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS {
+			statuses[i].Code = "sms"
 			statuses[i].Method = waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS
 			statuses[i].Available = available
 			statuses[i].CooldownSeconds = cooldownSeconds
@@ -725,7 +764,7 @@ func ensureSendSMSMethodStatus(statuses []VerificationMethodStatus, visible bool
 	}
 	return append(statuses, VerificationMethodStatus{
 		Method:          waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS,
-		Code:            "send_sms",
+		Code:            "sms",
 		Available:       available,
 		CooldownSeconds: cooldownSeconds,
 	})

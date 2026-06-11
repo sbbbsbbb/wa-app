@@ -6,10 +6,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { probeWaPhoneSMS, registerWaPhone, submitWaRegistrationOTP, type WaWorkflowResponse } from './wa-api';
 import { WhatsAppIcon } from './wa-brand-icon';
-import { accountReasonLabel } from './wa-result-labels';
+import { accountReasonLabel, methodStateLabel } from './wa-result-labels';
 import { waProbeCanStartRegistration, waProbeStatus } from './wa-result-model';
+import { WaRegistrationMethodList } from './wa-registration-method-list';
+import { registrationMethodAvailable, registrationMethodStatus, selectableRegistrationMethods, type SelectableRegistrationMethodOption } from './wa-registration-methods';
 import { WaResultPanel } from './wa-result-panel';
 import { resolveWaPhoneTarget, type WaResolvedPhone } from './wa-utils';
 
@@ -25,6 +28,7 @@ export function WaAccountAdd({ disabled, onChanged, onDone, onError }: Props) {
   const [pending, setPending] = useState<PendingRegistration | null>(null);
   const [registrationResult, setRegistrationResult] = useState<WaWorkflowResponse | null>(null);
   const [registrationTarget, setRegistrationTarget] = useState<WaResolvedPhone | null>(null);
+  const [deliveryMethod, setDeliveryMethod] = useState(selectableRegistrationMethods[0].value);
   const [otp, setOtp] = useState('');
   const [busy, setBusy] = useState(false);
   const samePhone = probeMatchesValues(probe, phone, countryCallingCode);
@@ -32,8 +36,9 @@ export function WaAccountAdd({ disabled, onChanged, onDone, onError }: Props) {
   const registrationSamePhone = Boolean(registrationTarget && currentTarget?.e164 === registrationTarget.e164);
   const activeRegistrationResult = registrationSamePhone ? registrationResult : null;
   const status = waProbeStatus(activeRegistrationResult || (samePhone ? probe?.result : null));
+  const probedStatus = samePhone ? waProbeStatus(probe?.result) : null;
   const blocked = status.blocked === true;
-  const canRegister = samePhone && waProbeCanStartRegistration(probe?.result) && !blocked;
+  const canRegister = samePhone && waProbeCanStartRegistration(probe?.result, deliveryMethod) && !blocked;
   const badgeVariant = pending ? 'default' : blocked ? 'destructive' : canRegister ? 'default' : 'outline';
   const badgeLabel = pending ? '等待 OTP' : blocked ? '已封禁' : canRegister ? '可注册' : '待检测';
 
@@ -50,7 +55,7 @@ export function WaAccountAdd({ disabled, onChanged, onDone, onError }: Props) {
         setProbe({ target: resolved.target, result: await probeWaPhoneSMS(resolved.target.input) });
       }
       if (action === 'register') {
-        const result = await registerWaPhone(resolved.target.input);
+        const result = await registerWaPhone(resolved.target.input, deliveryMethod);
         const resultStatus = waProbeStatus(result);
         setRegistrationResult(result);
         setRegistrationTarget(resolved.target);
@@ -109,7 +114,21 @@ export function WaAccountAdd({ disabled, onChanged, onDone, onError }: Props) {
             <Field><FieldLabel>国家拨号码</FieldLabel><Input placeholder="+1" value={countryCallingCode} onChange={(event) => setCountryCallingCode(event.target.value)} disabled={busy || disabled} /></Field>
             <Field><FieldLabel>手机号</FieldLabel><Input placeholder="4155550123" value={phone} onChange={(event) => setPhone(event.target.value)} disabled={busy || disabled} /></Field>
           </div>
-          <FieldDescription>填写国家拨号码和手机号；代理未配置时服务端会尝试直连。</FieldDescription>
+          <Field>
+            <FieldLabel>注册方式</FieldLabel>
+            <Select value={deliveryMethod} onValueChange={(value) => setDeliveryMethod(value as typeof deliveryMethod)} disabled={busy || disabled || Boolean(pending)}>
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {selectableRegistrationMethods.map((option) => (
+                  <SelectItem key={option.value} value={option.value} disabled={probedStatus ? !registrationMethodAvailable(probedStatus, option.value) : false}>
+                    {registrationOptionText(option, probedStatus)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <FieldDescription>APK 支持多种验证入口；当前注册页只直接发起普通 OTP/验证码通道。</FieldDescription>
+          <WaRegistrationMethodList />
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" disabled={busy || disabled} onClick={() => void run('probe')}><Search size={14} /> 检测</Button>
             <Button type="button" disabled={busy || disabled || Boolean(pending) || !canRegister} onClick={() => void run('register')}>发起注册</Button>
@@ -159,6 +178,12 @@ function probeMatchesValues(probe: ProbeState, phone: string, countryCallingCode
 function workflowText(result: WaWorkflowResponse, key: keyof WaWorkflowResponse) {
   const value = result[key];
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function registrationOptionText(option: SelectableRegistrationMethodOption, status: ReturnType<typeof waProbeStatus> | null) {
+  const methodStatus = status ? registrationMethodStatus(status, option.value) : null;
+  const state = methodStatus ? methodStateLabel(methodStatus.available, methodStatus.cooldownSeconds) : '';
+  return state ? `${option.label} · ${state}` : option.label;
 }
 
 function registrationFailureMessage(result: WaWorkflowResponse, status: ReturnType<typeof waProbeStatus>) {
