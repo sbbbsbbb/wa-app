@@ -34,4 +34,4 @@
 4. 若仍 blocked，再补 App 边带 client_log / pre-chatd AB。
 ## too_recent 冷却返回
 
-`/v2/code` 的 `too_recent` 不是号码封禁；App 响应可能携带 `sms_wait` / `retry_after` / `send_sms_wait` 等冷却字段。运行态现在会把这类响应归一为 `VERIFICATION_REQUEST_STATUS_REJECTED` + retryable rate-limit error，并在 `VerificationCodeRequestRecord.retry_after` 与 action JSON `retry_after_seconds` 中透出冷却秒数；`StartRegistration` 会返回 `registration_phase=OTP_COOLDOWN`，且不会把冷却误当成 OTP 已发送。
+`/v2/code` 的 `too_recent` 不是号码封禁；App 响应可能携带 `sms_wait` / `voice_wait` / `flash_wait` / `wa_old_wait` / `email_otp_wait` / `send_sms_wait` / `silent_auth_wait` 和 `retry_after`。运行态现在会把这类响应归一为 `VERIFICATION_REQUEST_STATUS_REJECTED` + retryable rate-limit error，并在 `VerificationCodeRequestRecord.retry_after`、`method_statuses` 与 action JSON `retry_after_seconds` / `method_statuses` 中透出冷却秒数；`StartRegistration` 会返回 `registration_phase=OTP_COOLDOWN`，且不会把冷却误当成 OTP 已发送。

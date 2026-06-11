@@ -548,22 +548,56 @@ func verificationMethod(name string) waappv1.VerificationDeliveryMethod {
 	}
 }
 
+type verificationWaitStatus struct {
+	Seconds   int64
+	Exhausted bool
+	Present   bool
+}
+
+var apkCooldownMethodCodes = []string{"sms", "voice", "flash", "wa_old", "email_otp", "send_sms", "silent_auth"}
+
 func verificationMethodStatuses(data map[string]any, methods []waappv1.VerificationDeliveryMethod) []VerificationMethodStatus {
-	_ = methods
 	out := []VerificationMethodStatus{}
 	for _, code := range fallbackVerificationMethodCodes(data) {
 		if !verificationMethodVisibleForProbe(data, code) {
 			continue
 		}
-		cooldown := verificationCodeCooldownSeconds(data, code)
-		out = append(out, VerificationMethodStatus{
-			Method:          verificationMethod(code),
-			Code:            code,
-			Available:       cooldown <= 0 && !verificationCodeWaitExhausted(data, code),
-			CooldownSeconds: cooldown,
-		})
+		out = upsertVerificationMethodStatus(out, code, verificationMethodWaitStatus(data, code, false))
+	}
+	for _, method := range methods {
+		code := registrationMethodName(method, "")
+		if code == "" {
+			continue
+		}
+		out = upsertVerificationMethodStatus(out, code, verificationMethodWaitStatus(data, code, false))
+	}
+	for _, code := range apkCooldownMethodCodes {
+		wait := verificationMethodWaitStatus(data, code, false)
+		if wait.Present {
+			out = upsertVerificationMethodStatus(out, code, wait)
+		}
 	}
 	return out
+}
+
+func verificationCodeMethodStatuses(data map[string]any, method waappv1.VerificationDeliveryMethod) []VerificationMethodStatus {
+	statuses := verificationMethodStatuses(data, []waappv1.VerificationDeliveryMethod{method})
+	code := registrationMethodName(method, "sms")
+	return upsertVerificationMethodStatus(statuses, code, verificationMethodWaitStatus(data, code, true))
+}
+
+func upsertVerificationMethodStatus(statuses []VerificationMethodStatus, code string, wait verificationWaitStatus) []VerificationMethodStatus {
+	method := verificationMethod(code)
+	if method == waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_UNSPECIFIED {
+		return statuses
+	}
+	for i := range statuses {
+		if statuses[i].Code == code || statuses[i].Method == method {
+			statuses[i] = VerificationMethodStatus{Method: method, Code: code, Available: wait.Seconds <= 0 && !wait.Exhausted, CooldownSeconds: wait.Seconds}
+			return statuses
+		}
+	}
+	return append(statuses, VerificationMethodStatus{Method: method, Code: code, Available: wait.Seconds <= 0 && !wait.Exhausted, CooldownSeconds: wait.Seconds})
 }
 
 func verificationMethodCode(name string) string {
@@ -654,95 +688,41 @@ func verificationMethodVisibleForProbe(data map[string]any, code string) bool {
 	}
 }
 
-func verificationCodeCooldownSeconds(data map[string]any, code string) int64 {
-	switch code {
-	case "sms":
-		return firstJSONWaitSeconds(data["sms_wait"], data["sms_wait_time"], data["sms_retry_after"], data["sms_retry_time"], data["pref_sms_wait_time"], data["EXTRA_SMS_RETRY_TIME"], data["retry_after"])
-	case "send_sms":
-		return firstJSONWaitSeconds(data["send_sms_wait"], data["send_sms_retry_after"], data["send_sms_retry_time"], data["pref_send_sms_wait_time"], data["EXTRA_SEND_SMS_RETRY_TIME"])
-	case "voice":
-		return firstJSONWaitSeconds(data["voice_wait"], data["voice_retry_after"], data["voice_retry_time"], data["pref_voice_wait_time"], data["EXTRA_VOICE_RETRY_TIME"])
-	case "flash":
-		return firstJSONWaitSeconds(data["flash_wait"], data["flash_retry_after"], data["flash_retry_time"], data["pref_flash_wait_time"], data["EXTRA_FLASH_RETRY_TIME"])
-	case "wa_old":
-		return firstJSONWaitSeconds(data["wa_old_wait"], data["wa_old_retry_time"], data["EXTRA_WA_OLD_RETRY_TIME"], data["pref_wa_old_wait_time"])
-	case "email_otp":
-		return firstJSONWaitSeconds(data["email_otp_wait"], data["email_otp_retry_time"], data["EXTRA_EMAIL_OTP_RETRY_TIME"], data["pref_email_otp_wait_time"])
-	case "silent_auth":
-		return firstJSONWaitSeconds(data["silent_auth_wait"], data["silent_auth_retry_time"], data["EXTRA_SILENT_AUTH_RETRY_TIME"], data["pref_silent_auth_wait_time"])
-	case "silent_auth_ts_43":
-		return firstJSONWaitSeconds(data["silent_auth_ts_43_wait"], data["silent_auth_ts_43_retry_time"], data["EXTRA_SILENT_AUTH_TS_43_RETRY_TIME"], data["pref_silent_auth_ts_43_wait_time"])
-	case "passkey":
-		return firstJSONWaitSeconds(data["passkey_wait"], data["passkey_retry_time"], data["EXTRA_PASSKEY_RETRY_TIME"], data["pref_passkey_wait_time"])
-	case "recaptcha":
-		return firstJSONWaitSeconds(data["recaptcha_wait"], data["recaptcha_retry_time"], data["EXTRA_RECAPTCHA_RETRY_TIME"], data["pref_recaptcha_wait_time"])
-	case "autoconf":
-		return firstJSONWaitSeconds(data["autoconf_wait"], data["autoconf_retry_time"], data["EXTRA_AUTOCONF_RETRY_TIME"], data["pref_autoconf_wait_time"])
-	case "deeplink_otp":
-		return firstJSONWaitSeconds(data["deeplink_otp_wait"], data["deeplink_otp_retry_time"], data["EXTRA_DEEPLINK_OTP_RETRY_TIME"], data["pref_deeplink_otp_wait_time"])
-	default:
-		return 0
+func verificationMethodWaitStatus(data map[string]any, code string, includeRetryAfter bool) verificationWaitStatus {
+	wait := firstJSONWaitStatus(verificationMethodWaitValues(data, code)...)
+	if wait.Present || !includeRetryAfter {
+		return wait
 	}
+	return firstJSONWaitStatus(data["retry_after"])
 }
 
-func verificationCodeWaitExhausted(data map[string]any, code string) bool {
+func verificationMethodWaitValues(data map[string]any, code string) []any {
 	switch code {
 	case "sms":
-		return firstJSONWaitExhausted(data["sms_wait"], data["sms_wait_time"], data["sms_retry_after"], data["sms_retry_time"], data["pref_sms_wait_time"], data["EXTRA_SMS_RETRY_TIME"], data["retry_after"])
+		return []any{data["sms_wait"], data["sms_wait_time"], data["sms_retry_time"], data["pref_sms_wait_time"], data["EXTRA_SMS_RETRY_TIME"]}
 	case "send_sms":
-		return firstJSONWaitExhausted(data["send_sms_wait"], data["send_sms_retry_after"], data["send_sms_retry_time"], data["pref_send_sms_wait_time"], data["EXTRA_SEND_SMS_RETRY_TIME"])
+		return []any{data["send_sms_wait"], data["send_sms_retry_time"], data["pref_send_sms_wait_time"], data["EXTRA_SEND_SMS_RETRY_TIME"]}
 	case "voice":
-		return firstJSONWaitExhausted(data["voice_wait"], data["voice_retry_after"], data["voice_retry_time"], data["pref_voice_wait_time"], data["EXTRA_VOICE_RETRY_TIME"])
+		return []any{data["voice_wait"], data["voice_wait_time"], data["voice_retry_time"], data["pref_voice_wait_time"], data["EXTRA_VOICE_RETRY_TIME"]}
 	case "flash":
-		return firstJSONWaitExhausted(data["flash_wait"], data["flash_retry_after"], data["flash_retry_time"], data["pref_flash_wait_time"], data["EXTRA_FLASH_RETRY_TIME"])
+		return []any{data["flash_wait"], data["flash_wait_time"], data["flash_retry_time"], data["pref_flash_wait_time"], data["EXTRA_FLASH_RETRY_TIME"]}
 	case "wa_old":
-		return firstJSONWaitExhausted(data["wa_old_wait"], data["wa_old_retry_time"], data["EXTRA_WA_OLD_RETRY_TIME"], data["pref_wa_old_wait_time"])
+		return []any{data["wa_old_wait"], data["wa_old_retry_time"], data["pref_wa_old_wait_time"], data["EXTRA_WA_OLD_RETRY_TIME"]}
 	case "email_otp":
-		return firstJSONWaitExhausted(data["email_otp_wait"], data["email_otp_retry_time"], data["EXTRA_EMAIL_OTP_RETRY_TIME"], data["pref_email_otp_wait_time"])
+		return []any{data["email_otp_wait"], data["email_otp_retry_time"], data["pref_email_otp_wait_time"], data["EXTRA_EMAIL_OTP_RETRY_TIME"]}
 	case "silent_auth":
-		return firstJSONWaitExhausted(data["silent_auth_wait"], data["silent_auth_retry_time"], data["EXTRA_SILENT_AUTH_RETRY_TIME"], data["pref_silent_auth_wait_time"])
-	case "silent_auth_ts_43":
-		return firstJSONWaitExhausted(data["silent_auth_ts_43_wait"], data["silent_auth_ts_43_retry_time"], data["EXTRA_SILENT_AUTH_TS_43_RETRY_TIME"], data["pref_silent_auth_ts_43_wait_time"])
-	case "passkey":
-		return firstJSONWaitExhausted(data["passkey_wait"], data["passkey_retry_time"], data["EXTRA_PASSKEY_RETRY_TIME"], data["pref_passkey_wait_time"])
-	case "recaptcha":
-		return firstJSONWaitExhausted(data["recaptcha_wait"], data["recaptcha_retry_time"], data["EXTRA_RECAPTCHA_RETRY_TIME"], data["pref_recaptcha_wait_time"])
-	case "autoconf":
-		return firstJSONWaitExhausted(data["autoconf_wait"], data["autoconf_retry_time"], data["EXTRA_AUTOCONF_RETRY_TIME"], data["pref_autoconf_wait_time"])
-	case "deeplink_otp":
-		return firstJSONWaitExhausted(data["deeplink_otp_wait"], data["deeplink_otp_retry_time"], data["EXTRA_DEEPLINK_OTP_RETRY_TIME"], data["pref_deeplink_otp_wait_time"])
+		return []any{data["silent_auth_wait"], data["pref_silent_auth_wait_time"]}
 	default:
-		return false
+		return nil
 	}
 }
 
 func verificationSMSCooldownSeconds(data map[string]any) int64 {
-	return firstJSONWaitSeconds(
-		data["sms_wait"],
-		data["sms_wait_time"],
-		data["sms_retry_after"],
-		data["sms_retry_time"],
-		data["pref_sms_wait_time"],
-		data["EXTRA_SMS_RETRY_TIME"],
-		data["retry_after"],
-		data["send_sms_wait"],
-		data["send_sms_retry_after"],
-		data["send_sms_retry_time"],
-		data["pref_send_sms_wait_time"],
-		data["EXTRA_SEND_SMS_RETRY_TIME"],
-	)
+	return verificationMethodWaitStatus(data, "sms", true).Seconds
 }
 
 func verificationSMSWaitExhausted(data map[string]any) bool {
-	return firstJSONWaitExhausted(
-		data["sms_wait"],
-		data["sms_wait_time"],
-		data["sms_retry_after"],
-		data["sms_retry_time"],
-		data["pref_sms_wait_time"],
-		data["EXTRA_SMS_RETRY_TIME"],
-		data["retry_after"],
-	)
+	return verificationMethodWaitStatus(data, "sms", true).Exhausted
 }
 
 func smsProbeAvailableByCooldownOnly(smsWait int64, smsWaitExhausted bool, blocked bool, protocolRejected bool, invalidNumber bool, rateLimited bool, routeUnavailable bool) bool {
@@ -825,22 +805,18 @@ func firstPresentJSONInt64(values ...any) (int64, bool) {
 	return 0, false
 }
 
-func firstJSONWaitSeconds(values ...any) int64 {
+func firstJSONWaitStatus(values ...any) verificationWaitStatus {
 	for _, value := range values {
-		if result := normalizeWaitSeconds(jsonInt64(value)); result > 0 {
-			return result
+		if !jsonValuePresent(value) {
+			continue
 		}
-	}
-	return 0
-}
-
-func firstJSONWaitExhausted(values ...any) bool {
-	for _, value := range values {
-		if jsonValuePresent(value) {
-			return jsonInt64(value) == -1
+		raw := jsonInt64(value)
+		if raw < 0 {
+			return verificationWaitStatus{Exhausted: true, Present: true}
 		}
+		return verificationWaitStatus{Seconds: normalizeWaitSeconds(raw), Present: true}
 	}
-	return false
+	return verificationWaitStatus{}
 }
 
 func normalizeWaitSeconds(value int64) int64 {

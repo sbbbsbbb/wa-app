@@ -565,6 +565,23 @@ func methodStatusMaps(statuses []VerificationMethodStatus) []map[string]any {
 	return out
 }
 
+func protoMethodStatusMaps(statuses []*waappv1.VerificationMethodStatus) []map[string]any {
+	out := make([]map[string]any, 0, len(statuses))
+	for _, status := range statuses {
+		if status.GetDeliveryMethod() == waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_UNSPECIFIED {
+			continue
+		}
+		method := registrationMethodName(status.GetDeliveryMethod(), "")
+		out = append(out, map[string]any{
+			"method":           method,
+			"delivery_method":  status.GetDeliveryMethod().String(),
+			"available":        status.GetAvailable(),
+			"cooldown_seconds": durationSeconds(status.GetCooldown()),
+		})
+	}
+	return out
+}
+
 func optionalBoolField(data map[string]any, key string) (bool, bool) {
 	switch value := data[key].(type) {
 	case bool:

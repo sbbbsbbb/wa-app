@@ -18,7 +18,7 @@ func (s *Server) ProbeAccount(ctx context.Context, req *waappv1.ProbeAccountRequ
 	}
 	result := s.runner.ProbeAccount(ctx, EngineRegistrationInput{WAAccountID: waAccountID(account), ClientProfileID: profile.GetClientProfileId(), ProtocolProfileID: profile.GetProtocolProfileId(), AppVersion: s.clientProfileAppVersion(ctx, profile), Phone: account.GetPhone(), DeliveryMethod: waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS})
 	now := s.clock.Now()
-	probe := &waappv1.AccountProbe{AccountProbeId: s.ids.NewID("waprobe_"), WaAccountId: waAccountID(account), ClientProfileId: profile.GetClientProfileId(), Status: result.Status, SupportedMethods: result.SupportedMethods, ProbedAt: timestamppb.New(now), LastError: ToProtoError(result.Err)}
+	probe := &waappv1.AccountProbe{AccountProbeId: s.ids.NewID("waprobe_"), WaAccountId: waAccountID(account), ClientProfileId: profile.GetClientProfileId(), Status: result.Status, SupportedMethods: result.SupportedMethods, ProbedAt: timestamppb.New(now), LastError: ToProtoError(result.Err), MethodStatuses: protoVerificationMethodStatuses(result.MethodStatuses)}
 	if err := s.store.SaveAccountProbe(ctx, probe); err != nil {
 		return &waappv1.ProbeAccountResponse{Error: ToProtoError(err)}, nil
 	}
@@ -282,5 +282,21 @@ func (s *Server) newVerificationCodeRequestRecord(account *waappv1.WAAccount, pr
 		ExpiresAt:             defaultExpiry(now, timestamp(result.ExpiresAt)),
 		LastError:             ToProtoError(result.Err),
 		RetryAfter:            durationToProto(result.RetryAfter),
+		MethodStatuses:        protoVerificationMethodStatuses(result.MethodStatuses),
 	}
+}
+
+func protoVerificationMethodStatuses(statuses []VerificationMethodStatus) []*waappv1.VerificationMethodStatus {
+	out := make([]*waappv1.VerificationMethodStatus, 0, len(statuses))
+	for _, status := range statuses {
+		if status.Method == waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_UNSPECIFIED {
+			continue
+		}
+		out = append(out, &waappv1.VerificationMethodStatus{
+			DeliveryMethod: status.Method,
+			Available:      status.Available,
+			Cooldown:       durationFromSeconds(status.CooldownSeconds),
+		})
+	}
+	return out
 }

@@ -115,6 +115,13 @@ message AccountProbe {
   repeated VerificationDeliveryMethod supported_methods = 5;
   google.protobuf.Timestamp probed_at = 6;
   WaError last_error = 7;
+  repeated VerificationMethodStatus method_statuses = 8;
+}
+
+message VerificationMethodStatus {
+  VerificationDeliveryMethod delivery_method = 1;
+  bool available = 2;
+  google.protobuf.Duration cooldown = 3;
 }
 
 message VerificationCodeRequestRecord {
@@ -128,6 +135,7 @@ message VerificationCodeRequestRecord {
   google.protobuf.Timestamp expires_at = 8;
   WaError last_error = 9;
   google.protobuf.Duration retry_after = 10;
+  repeated VerificationMethodStatus method_statuses = 11;
 }
 
 message RegisteredIdentity {

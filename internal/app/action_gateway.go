@@ -199,6 +199,7 @@ func (g *actionGateway) requestSMSOTP(ctx context.Context, payload map[string]an
 		"status":                  record.GetStatus().String(),
 		"verification_request_id": record.GetVerificationRequestId(),
 		"verification_request":    protoMap(record),
+		"method_statuses":         protoMethodStatusMaps(record.GetMethodStatuses()),
 		"proxy":                   registrationProxyRouteMap(route, managedRoute),
 	}
 	if seconds := durationSeconds(record.GetRetryAfter()); seconds > 0 {

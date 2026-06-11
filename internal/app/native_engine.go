@@ -143,24 +143,38 @@ func (e *NativeEngine) requestVerificationCodeWithState(ctx context.Context, inp
 	if enc != "" {
 		state.LastCodeResult["enc_sha256"] = encHash(enc)
 	}
-	retryAfter := verificationCodeRetryAfter(data)
+	retryAfter := verificationCodeRetryAfter(data, input.DeliveryMethod)
 	now := e.clock.Now()
 	if err != nil {
 		if verificationCodeRateLimited(data) {
-			return verificationCodeRejectedResult(data, now, retryAfter, "verification request is cooling down"), state
+			return verificationCodeRejectedResult(data, input.DeliveryMethod, now, retryAfter, "verification request is cooling down"), state
 		}
-		return EngineCodeResult{Status: waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_REJECTED, RawStatus: responseStatus(data), RawReason: responseReason(data), Err: classifyHTTPError(data, err)}, state
+		return EngineCodeResult{
+			Status:         waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_REJECTED,
+			RetryAfter:     retryAfter,
+			MethodStatuses: verificationCodeMethodStatuses(data, input.DeliveryMethod),
+			RawStatus:      responseStatus(data),
+			RawReason:      responseReason(data),
+			Err:            classifyHTTPError(data, err),
+		}, state
 	}
 	status := waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_WAITING
 	s := responseStatus(data)
 	if s == "sent" || s == "ok" {
 		status = waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_SENT
 	} else if verificationCodeRateLimited(data) {
-		return verificationCodeRejectedResult(data, now, retryAfter, "verification request is cooling down"), state
+		return verificationCodeRejectedResult(data, input.DeliveryMethod, now, retryAfter, "verification request is cooling down"), state
 	} else if s != "" {
-		return EngineCodeResult{Status: waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_REJECTED, RawStatus: responseStatus(data), RawReason: responseReason(data), Err: waProtocolError(data, "verification request was rejected")}, state
+		return EngineCodeResult{
+			Status:         waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_REJECTED,
+			RetryAfter:     retryAfter,
+			MethodStatuses: verificationCodeMethodStatuses(data, input.DeliveryMethod),
+			RawStatus:      responseStatus(data),
+			RawReason:      responseReason(data),
+			Err:            waProtocolError(data, "verification request was rejected"),
+		}, state
 	}
-	return verificationCodeResult(status, data, now, retryAfter), state
+	return verificationCodeResult(status, data, input.DeliveryMethod, now, retryAfter), state
 }
 
 func (e *NativeEngine) SubmitVerificationCode(ctx context.Context, input EngineSubmitInput) EngineRegisterResult {
@@ -700,23 +714,25 @@ func sanitizeResponse(data map[string]any) map[string]any {
 	return out
 }
 
-func verificationCodeResult(status waappv1.VerificationRequestStatus, data map[string]any, now time.Time, retryAfter time.Duration) EngineCodeResult {
+func verificationCodeResult(status waappv1.VerificationRequestStatus, data map[string]any, method waappv1.VerificationDeliveryMethod, now time.Time, retryAfter time.Duration) EngineCodeResult {
 	return EngineCodeResult{
 		Status:             status,
 		ExpectedCodeLength: int32(jsonNumber(data["length"])),
 		ExpiresAt:          now.Add(10 * time.Minute),
 		RetryAfter:         retryAfter,
+		MethodStatuses:     verificationCodeMethodStatuses(data, method),
 		RawStatus:          responseStatus(data),
 		RawReason:          responseReason(data),
 	}
 }
 
-func verificationCodeRejectedResult(data map[string]any, now time.Time, retryAfter time.Duration, fallback string) EngineCodeResult {
+func verificationCodeRejectedResult(data map[string]any, method waappv1.VerificationDeliveryMethod, now time.Time, retryAfter time.Duration, fallback string) EngineCodeResult {
 	return EngineCodeResult{
 		Status:             waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_REJECTED,
 		ExpectedCodeLength: int32(jsonNumber(data["length"])),
 		ExpiresAt:          now.Add(10 * time.Minute),
 		RetryAfter:         retryAfter,
+		MethodStatuses:     verificationCodeMethodStatuses(data, method),
 		RawStatus:          responseStatus(data),
 		RawReason:          responseReason(data),
 		Err:                waProtocolError(data, fallback),
@@ -736,8 +752,8 @@ func verificationCodeRateLimited(data map[string]any) bool {
 	}
 }
 
-func verificationCodeRetryAfter(data map[string]any) time.Duration {
-	seconds := verificationSMSCooldownSeconds(data)
+func verificationCodeRetryAfter(data map[string]any, method waappv1.VerificationDeliveryMethod) time.Duration {
+	seconds := verificationMethodWaitStatus(data, registrationMethodName(method, "sms"), true).Seconds
 	if seconds <= 0 {
 		return 0
 	}

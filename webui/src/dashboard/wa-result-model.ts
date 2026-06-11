@@ -30,6 +30,7 @@ export function waProbeStatus(result?: WaWorkflowResponse | null): WaProbeStatus
   const accountProbe = record(result?.account_probe);
   const smsProbe = record(result?.sms_probe);
   const proxy = record(result?.proxy);
+  const verificationRequest = record(result?.verification_request);
   const registered = firstBool(phoneStatus.registered, accountProbe.registered) ?? registeredSignal(phoneStatus.account_raw_status, accountProbe.raw_status, accountProbe.status);
   const blocked = firstBool(phoneStatus.blocked, accountProbe.blocked) ?? blockedSignal(result?.reject_reason, result?.error_message, result?.status, phoneStatus.account_raw_status, accountProbe.raw_status, accountProbe.status, phoneStatus.account_raw_reason, accountProbe.raw_reason);
   const accountReachable = firstBool(phoneStatus.account_reachable, accountProbe.success) ?? statusIn(['reachable', 'account_probe_status_reachable', 'ok', 'sent', 'valid', 'exists', 'incorrect'], phoneStatus.account_status, accountProbe.account_status, accountProbe.status, accountProbe.raw_status, accountProbe.raw_reason);
@@ -45,7 +46,7 @@ export function waProbeStatus(result?: WaWorkflowResponse | null): WaProbeStatus
   const rejectReason = firstText(phoneStatus.reject_reason, result?.reject_reason, result?.error_message, result?.status);
   const explicitRequestFailed = firstBool(phoneStatus.request_failed, result?.request_failed);
   const requestFailed = explicitRequestFailed ?? (result?.success === false || (accountFlow !== 'registered' && (accountRejected(accountStatus, accountRawReason, accountError) || requestFailure(rejectReason, result?.error_message, result?.status))));
-  const methodStatuses = verificationMethodStatuses(phoneStatus.method_statuses, accountProbe.method_statuses);
+  const methodStatuses = verificationMethodStatuses(phoneStatus.method_statuses, accountProbe.method_statuses, result?.method_statuses, verificationRequest.method_statuses);
   return {
     requestFailed, failureReason: rejectReason || accountRawReason || accountError,
     registered, blocked, accountReachable, smsAvailable, smsWaitSeconds, smsWaitUntil, canRegister, accountFlow,
@@ -130,7 +131,7 @@ function addMethodStatus(seen: Map<string, VerificationMethodStatus>, value: unk
   if (!Object.keys(item).length) return;
   const label = methodLabel(firstText(item.method, item.delivery_method, item.name, item.type));
   if (!label) return;
-  upsertMethodStatus(seen, label, firstBool(item.available, item.eligible, item.enabled), firstNumber(item.cooldown_seconds, item.wait_seconds, item.retry_after_seconds));
+  upsertMethodStatus(seen, label, firstBool(item.available, item.eligible, item.enabled), firstNumber(item.cooldown_seconds, item.wait_seconds, item.retry_after_seconds, durationSeconds(item.cooldown)));
 }
 function upsertMethodStatus(seen: Map<string, VerificationMethodStatus>, label: string, available?: boolean, cooldownSeconds: number | null = null) {
   const key = label.toLowerCase();
@@ -148,6 +149,12 @@ function addItem(entries: MetaItem[], label: string, value?: string, tone: Resul
 }
 function registeredSignal(...values: unknown[]) {
   return statusIn(['registered', 'exists', 'account_exists'], ...values) ? true : undefined;
+}
+
+function durationSeconds(value: unknown) {
+  if (typeof value !== 'string') return null;
+  const match = /^(\d+(?:\.\d+)?)s$/.exec(value.trim());
+  return match ? Number(match[1]) : null;
 }
 
 function deriveAccountFlow(input: { registered?: boolean; blocked?: boolean; smsAvailable?: boolean; accountStatus: string; rawReason: string }) {
