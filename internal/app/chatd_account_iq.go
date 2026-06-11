@@ -84,10 +84,20 @@ func chatdIQError(node chatdNode) error {
 	message := "WA account settings request was rejected"
 	if errorNode, ok := chatdChild(node, "error"); ok {
 		if code := strings.TrimSpace(errorNode.Attrs["code"]); code != "" {
-			message = message + " (code " + code + ")"
+			message = message + chatdIQErrorCodeMessage(code)
 		}
 	}
 	return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_REJECTED, message, false)
+}
+
+func chatdIQErrorCodeMessage(code string) string {
+	if strings.HasPrefix(code, "<tok:") && strings.HasSuffix(code, ">") {
+		return " (upstream error code could not be decoded)"
+	}
+	if code == "533" {
+		return " (WA rejected this settings operation for this account right now; code 533)"
+	}
+	return " (code " + code + ")"
 }
 
 func chatdChild(node chatdNode, tag string) (chatdNode, bool) {
