@@ -4,16 +4,21 @@ services:
     image: ghcr.io/pood1e/wa-app-service:${WA_APP_IMAGE_TAG:-latest}
     container_name: wa-app
     environment:
+      WA_APP_LISTEN_ADDR: ${WA_APP_LISTEN_ADDR:-:50091}
+      WA_APP_DASHBOARD_HTTP_ADDR: ${WA_APP_DASHBOARD_HTTP_ADDR:-:8080}
+      WA_APP_DASHBOARD_STATIC_DIR: ${WA_APP_DASHBOARD_STATIC_DIR:-/app/dashboard/wa}
       WA_APP_AUTH_PASSWORD: ${WA_APP_AUTH_PASSWORD:-}
       WA_APP_PG_DSN: ${WA_APP_PG_DSN:-}
       WA_APP_REDIS_URL: ${WA_APP_REDIS_URL:-}
       WA_COMMON_PROXY: ${WA_COMMON_PROXY:-}
       WA_NUMBER_PROBE_PROXY: ${WA_NUMBER_PROBE_PROXY:-}
       WA_REGISTRATION_PROXY: ${WA_REGISTRATION_PROXY:-}
+      WA_APP_DATA_DIR: ${WA_APP_DATA_DIR:-/var/lib/wa-app}
     ports:
+      - "127.0.0.1:50091:50091"
       - "127.0.0.1:8080:8080"
     volumes:
-      - wa-app-data:/var/lib/wa-app
+      - wa-app-data:${WA_APP_DATA_DIR:-/var/lib/wa-app}
     restart: unless-stopped
     # depends_on:
     #   postgres:

@@ -23,12 +23,12 @@ docker compose pull
 docker compose up -d
 ```
 
-如果你只是本地快速启动，也可以直接 `docker compose up -d`（不创建 `.env` 也能启动，未配置值默认为空/空端口）。
+如果你只是本地快速启动，也可以直接 `docker compose up -d`（不创建 `.env` 也能启动，未配置值使用 compose 默认值）。
 
 默认端口（固定）：
 
 - Dashboard：`http://127.0.0.1:8080`（`docker-compose.yml` 映射）
-- gRPC：`:50091`（容器内监听，默认不对外映射）
+- gRPC：`127.0.0.1:50091`
 
 若你确实要改主机映射端口，请直接改 `docker-compose.yml` 的 `ports` 行（非配置项）。
 
@@ -38,6 +38,7 @@ docker compose up -d
 
 - `WA_APP_IMAGE_TAG`：镜像标签，生产建议使用固定版本。
 - `WA_APP_AUTH_PASSWORD`：可选 dashboard 单密码登录；为空则关闭鉴权。
+- `WA_APP_DATA_DIR`：容器内持久化目录；默认 `/var/lib/wa-app`。
 - `WA_APP_PG_DSN`：可选 PostgreSQL DSN；为空时使用内置 SQLite 持久化。
 - `WA_APP_REDIS_URL`：可选 Redis URL；为空时使用内置 SQLite 运行态存储。
 - `WA_COMMON_PROXY`：可选默认 WA 出站代理；为空则直连。

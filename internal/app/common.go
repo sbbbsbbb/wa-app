@@ -58,13 +58,9 @@ func ToProtoError(err error) *waappv1.WaError {
 	if errors.As(err, &appErr) {
 		return &waappv1.WaError{Code: appErr.Code, Message: appErr.Message, Retryable: appErr.Retryable}
 	}
-	message := strings.TrimSpace(err.Error())
-	if message == "" {
-		message = "wa-app operation failed"
-	}
 	return &waappv1.WaError{
 		Code:      waappv1.WaErrorCode_WA_ERROR_CODE_INTERNAL,
-		Message:   message,
+		Message:   "wa-app operation failed",
 		Retryable: isRetryableInternalError(err),
 	}
 }
@@ -197,10 +193,14 @@ func isRetryableInternalError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
 	}
 	return hasRetryableErrorMarker(err.Error())

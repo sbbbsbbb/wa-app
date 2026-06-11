@@ -11,6 +11,7 @@ type Config struct {
 	GRPCListenAddr     string `env:"WA_APP_LISTEN_ADDR"`
 	DashboardHTTPAddr  string `env:"WA_APP_DASHBOARD_HTTP_ADDR"`
 	DashboardStaticDir string `env:"WA_APP_DASHBOARD_STATIC_DIR"`
+	DataDir            string `env:"WA_APP_DATA_DIR"`
 	CommonProxy        string `env:"WA_COMMON_PROXY"`
 	NumberProbeProxy   string `env:"WA_NUMBER_PROBE_PROXY"`
 	RegistrationProxy  string `env:"WA_REGISTRATION_PROXY"`

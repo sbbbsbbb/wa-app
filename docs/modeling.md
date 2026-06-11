@@ -115,7 +115,7 @@ Go 原生实现关系：
 
 号码探测路径每次生成随机设备指纹但不持久化；配置 `WA_COMMON_PROXY` 时 WA 出站链路默认使用该代理；`WA_NUMBER_PROBE_PROXY` 可覆盖号码/SMS 探测代理，`WA_REGISTRATION_PROXY` 可覆盖注册与 OTP 提交代理，二者为空时回退到 `WA_COMMON_PROXY`，未配置时直连降级。代理始终是可选增强；不做出口 IP、风控、CF 或目标连通性预检，不按 workspace、号码、账号、号码国家或地区直接持有上游代理 lease。
 
-PG/Redis/proxy 都不是 wa-app 启动必需依赖；默认使用容器/主机内置的 `/var/lib/wa-app` 目录进行 SQLite durable/runtime 存储，proxy 缺省直连，外部自动化仅能作为调用方存在。
+PG/Redis/proxy 都不是 wa-app 启动必需依赖；PG/Redis 缺省使用 `WA_APP_DATA_DIR`（默认 `/var/lib/wa-app`）下的 SQLite durable/runtime 存储，proxy 缺省直连，外部自动化仅能作为调用方存在。
 
 ## 9. 前端管理边界
 
