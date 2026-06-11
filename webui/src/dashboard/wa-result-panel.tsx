@@ -4,10 +4,10 @@ import { metaItems, outcomeMeta, waProbeStatus, type BadgeVariant, type ResultTo
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 
-export function WaResultPanel({ title, phone, result, loading }: { title: string; phone?: string; result?: WaWorkflowResponse | null; loading?: boolean }) {
+export function WaResultPanel({ title, phone, result, loading, showMethods = true }: { title: string; phone?: string; result?: WaWorkflowResponse | null; loading?: boolean; showMethods?: boolean }) {
   const status = waProbeStatus(result);
   const outcome = outcomeMeta(status, result, loading);
-  const methods = status.methodStatuses.map((method) => ({ key: method.key, label: method.label, state: methodStateLabel(method.available, method.cooldownSeconds) }));
+  const methods = showMethods ? status.methodStatuses.map((method) => ({ key: method.key, label: method.label, state: methodStateLabel(method.available, method.cooldownSeconds) })) : [];
   const meta = metaItems(status, result);
   return (
     <div className="grid gap-2">
