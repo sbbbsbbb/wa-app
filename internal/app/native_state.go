@@ -20,6 +20,8 @@ import (
 
 const nativeStateSchema = "byte-v-forge-wa-app-native-state/v1"
 
+var nativeUserAgentDevicePattern = regexp.MustCompile(`(?:^|\s)Android/([^ ]+)\s+Device/([^- \t/]+)-([^/\s]+)`)
+
 type nativeState struct {
 	Schema          string                          `json:"schema"`
 	CreatedAtUnix   int64                           `json:"created_at_unix"`
@@ -202,6 +204,7 @@ func buildNativeOneTimePreKeys(count int) []nativeSignalPreKey {
 }
 
 func marshalNativeState(state nativeState) ([]byte, error) {
+	state.Profile = normalizeNativePhoneProfile(state.Profile, "")
 	return json.MarshalIndent(state, "", "  ")
 }
 
@@ -210,6 +213,14 @@ func unmarshalNativeState(data []byte) (nativeState, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nativeState{}, err
 	}
+	var disk struct {
+		UserAgent string `json:"user_agent"`
+		Profile   struct {
+			UserAgent string `json:"user_agent"`
+		} `json:"profile"`
+	}
+	_ = json.Unmarshal(data, &disk)
+	state.Profile = normalizeNativePhoneProfile(state.Profile, firstNonEmpty(disk.Profile.UserAgent, disk.UserAgent))
 	state.ensureMaps()
 	return state, nil
 }
@@ -516,10 +527,8 @@ func nativeUserAgentForProfile(profile nativePhoneProfile, appVersion string) st
 }
 
 func nativeDeviceUserAgent(profile nativePhoneProfile) string {
-	vendor := firstNonEmpty(profile.DeviceVendor, "HUAWEI")
-	model := firstNonEmpty(profile.DeviceModel, "TRT-AL00A")
-	androidVersion := firstNonEmpty(profile.AndroidVersion, "7.0")
-	return "Android/" + androidVersion + " Device/" + vendor + "-" + model
+	profile = normalizeNativePhoneProfile(profile, "")
+	return "Android/" + profile.AndroidVersion + " Device/" + profile.DeviceVendor + "-" + profile.DeviceModel
 }
 
 func nativeAppVersion(appVersion string) string {
@@ -527,6 +536,31 @@ func nativeAppVersion(appVersion string) string {
 		return defaultWAAppVersion
 	}
 	return strings.TrimSpace(appVersion)
+}
+
+func normalizeNativePhoneProfile(profile nativePhoneProfile, userAgent string) nativePhoneProfile {
+	if device, ok := nativeDeviceModelFromUserAgent(userAgent); ok {
+		profile.DeviceVendor = firstNonEmpty(profile.DeviceVendor, device.Vendor)
+		profile.DeviceModel = firstNonEmpty(profile.DeviceModel, device.Model)
+		profile.AndroidVersion = firstNonEmpty(profile.AndroidVersion, device.Android)
+	}
+	device := defaultNativeDeviceModel()
+	profile.DeviceVendor = firstNonEmpty(profile.DeviceVendor, device.Vendor)
+	profile.DeviceModel = firstNonEmpty(profile.DeviceModel, device.Model)
+	profile.AndroidVersion = firstNonEmpty(profile.AndroidVersion, device.Android)
+	return profile
+}
+
+func nativeDeviceModelFromUserAgent(userAgent string) (nativeDeviceModel, bool) {
+	match := nativeUserAgentDevicePattern.FindStringSubmatch(strings.TrimSpace(userAgent))
+	if len(match) != 4 {
+		return nativeDeviceModel{}, false
+	}
+	return nativeDeviceModel{Android: match[1], Vendor: match[2], Model: match[3]}, true
+}
+
+func defaultNativeDeviceModel() nativeDeviceModel {
+	return nativeDeviceModels[0]
 }
 
 func parseJSONMap(text string) map[string]any {

@@ -596,22 +596,23 @@ func loginPayload(identity loginIdentity, state nativeState, version string, pas
 }
 
 func chatdUserAgentForState(state nativeState, version string) userAgentConfig {
+	profile := normalizeNativePhoneProfile(state.Profile, "")
 	cfg := userAgentConfig{
 		version:       nativeAppVersion(version),
-		osVersion:     firstNonEmpty(state.Profile.AndroidVersion, "13"),
-		manufacturer:  firstNonEmpty(state.Profile.DeviceVendor, "samsung"),
-		device:        firstNonEmpty(state.Profile.DeviceModel, "SM-G991B"),
+		osVersion:     profile.AndroidVersion,
+		manufacturer:  profile.DeviceVendor,
+		device:        profile.DeviceModel,
 		osBuildNumber: "TP1A.220624.014",
-		phoneID:       state.Profile.FDID,
+		phoneID:       profile.FDID,
 		localeLang:    "en",
 		localeCountry: "US",
 		deviceBoard:   "lahaina",
-		deviceExpID:   firstNonEmpty(state.Profile.ExpIDUUID, state.Profile.ExpID),
+		deviceExpID:   firstNonEmpty(profile.ExpIDUUID, profile.ExpID),
 		modelType:     "phone",
 	}
-	if state.Profile.AdditionalMapFields != nil {
-		cfg.mcc = state.Profile.AdditionalMapFields["mcc"]
-		cfg.mnc = state.Profile.AdditionalMapFields["mnc"]
+	if profile.AdditionalMapFields != nil {
+		cfg.mcc = profile.AdditionalMapFields["mcc"]
+		cfg.mnc = profile.AdditionalMapFields["mnc"]
 	}
 	return cfg
 }
