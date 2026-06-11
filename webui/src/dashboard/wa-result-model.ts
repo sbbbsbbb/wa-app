@@ -70,7 +70,7 @@ export function outcomeMeta(status: WaProbeStatus, result?: WaWorkflowResponse |
   if (status.accountFlow === 'not_registered') return { label: '旧设备未知', variant: 'secondary' };
   return { label: '完成', variant: 'secondary' };
 }
-export function metaItems(status: WaProbeStatus, result?: WaWorkflowResponse | null): MetaItem[] {
+export function metaItems(status: WaProbeStatus, result?: WaWorkflowResponse | null, showSmsExtra = true): MetaItem[] {
   const entries: MetaItem[] = [];
   if (status.requestFailed) {
     addItem(entries, '账号状态', accountStatusLabel(status.accountStatus || status.accountRawStatus), 'bad');
@@ -82,7 +82,7 @@ export function metaItems(status: WaProbeStatus, result?: WaWorkflowResponse | n
   }
   const account = accountFeedback(status);
   addItem(entries, '账号反馈', account, account ? 'warn' : 'idle');
-  addItem(entries, 'SMS补充', smsExtra(status));
+  if (showSmsExtra) addItem(entries, 'SMS补充', smsExtra(status));
   addItem(entries, '代理', status.proxyText);
   return entries;
 }

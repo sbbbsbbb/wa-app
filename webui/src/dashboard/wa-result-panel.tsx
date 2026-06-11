@@ -8,7 +8,7 @@ export function WaResultPanel({ title, phone, result, loading, showMethods = tru
   const status = waProbeStatus(result);
   const outcome = outcomeMeta(status, result, loading);
   const methods = showMethods ? status.methodStatuses.map((method) => ({ key: method.key, label: method.label, state: methodStateLabel(method.available, method.cooldownSeconds) })) : [];
-  const meta = metaItems(status, result);
+  const meta = metaItems(status, result, showMethods);
   return (
     <div className="grid gap-2">
       <div className="flex items-center justify-between gap-2">
@@ -19,7 +19,7 @@ export function WaResultPanel({ title, phone, result, loading, showMethods = tru
         <Badge variant={badgeVariant(outcome.variant)}>{outcome.label}</Badge>
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {waMetrics(status).map((item) => <MetricChip key={item.label} {...item} />)}
+        {waMetrics(status, showMethods).map((item) => <MetricChip key={item.label} {...item} />)}
       </div>
       {(methods.length > 0 || meta.length > 0) && (
         <Card className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-background/70 px-2.5 py-1.5 text-[11px] shadow-none">
@@ -56,7 +56,7 @@ function toneClass(tone: ResultTone = 'idle', chip = false) {
   return 'text-muted-foreground';
 }
 
-function waMetrics(status: WaProbeStatus): Array<{ label: string; value: string; tone: ResultTone }> {
+function waMetrics(status: WaProbeStatus, showSms: boolean): Array<{ label: string; value: string; tone: ResultTone }> {
   if (status.blocked === true) {
     return [
       { label: '封禁', value: '是', tone: 'bad' },
@@ -71,11 +71,12 @@ function waMetrics(status: WaProbeStatus): Array<{ label: string; value: string;
       { label: '原因', value: accountReasonLabel(status.accountRawReason, status.failureReason, status.accountRawStatus) || '请求被 WA 拒绝', tone: 'bad' },
     ];
   }
-  return [
+  const items = [
     { label: '旧设备', value: oldDeviceLabel(status.registered, status.accountFlow), tone: oldDeviceTone(status) },
-    { label: 'SMS', value: smsLabel(status.smsAvailable, status.smsWaitSeconds), tone: smsTone(status) },
     { label: '封禁', value: booleanLabel(status.blocked), tone: booleanTone(status.blocked) },
   ];
+  if (showSms) items.splice(1, 0, { label: 'SMS', value: smsLabel(status.smsAvailable, status.smsWaitSeconds), tone: smsTone(status) });
+  return items;
 }
 
 function oldDeviceTone(status: WaProbeStatus): ResultTone {
