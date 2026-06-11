@@ -25,7 +25,7 @@ func (e *NativeEngine) ApplyAccountSettings(ctx context.Context, input EngineAcc
 	if err != nil {
 		return EngineAccountSettingsResult{Status: waappv1.AccountSettingsOperationStatus_ACCOUNT_SETTINGS_OPERATION_STATUS_REJECTED, Err: err}
 	}
-	return e.applyAccountSettingsWithSender(ctx, input, state, newChatdClient(chatdConfigForState(proxyURL, state, defaultAccountIQTimeout)))
+	return e.applyAccountSettingsWithSender(ctx, input, state, newChatdClient(accountSettingsChatdConfig(proxyURL, state)))
 }
 
 func (e *NativeEngine) applyAccountSettingsWithSender(ctx context.Context, input EngineAccountSettingsInput, state nativeState, sender accountSettingsIQSender) EngineAccountSettingsResult {
@@ -36,12 +36,12 @@ func (e *NativeEngine) applyAccountSettingsWithSender(ctx context.Context, input
 	if request.Tag == "" {
 		return EngineAccountSettingsResult{Status: waappv1.AccountSettingsOperationStatus_ACCOUNT_SETTINGS_OPERATION_STATUS_REJECTED, Err: NewError(waappv1.WaErrorCode_WA_ERROR_CODE_UNSUPPORTED_OPERATION, "account settings operation is not supported", false)}
 	}
-	response, update, err := sender.sendIQ(ctx, state, input.RegisteredIdentityID, defaultWAAppVersion, request, "account settings iq timed out")
+	response, update, err := sender.sendIQ(ctx, state, input.RegisteredIdentityID, defaultWAAppVersion, request, accountSettingsIQTimeoutMessage)
 	if applyChatdSessionUpdateState(&state, update) {
 		_ = e.saveState(ctx, input.ClientProfileID, state)
 	}
 	if err != nil {
-		return EngineAccountSettingsResult{Status: waappv1.AccountSettingsOperationStatus_ACCOUNT_SETTINGS_OPERATION_STATUS_REJECTED, Err: NewError(waappv1.WaErrorCode_WA_ERROR_CODE_REJECTED, "native account settings request failed", accountSettingsRetryableError(err))}
+		return EngineAccountSettingsResult{Status: waappv1.AccountSettingsOperationStatus_ACCOUNT_SETTINGS_OPERATION_STATUS_REJECTED, Err: accountSettingsRequestError(err)}
 	}
 	return accountSettingsResultFromIQ(input, response)
 }
@@ -63,7 +63,7 @@ func (e *NativeEngine) applyAccountProfileName(ctx context.Context, input Engine
 		return EngineAccountSettingsResult{Status: waappv1.AccountSettingsOperationStatus_ACCOUNT_SETTINGS_OPERATION_STATUS_REJECTED, Err: err}
 	}
 	request.Attrs["id"] = e.ids.NewID("waiq_")
-	response, update, err := sender.sendIQ(ctx, state, input.RegisteredIdentityID, defaultWAAppVersion, request, "account settings iq timed out")
+	response, update, err := sender.sendIQ(ctx, state, input.RegisteredIdentityID, defaultWAAppVersion, request, accountSettingsIQTimeoutMessage)
 	changed := applyChatdSessionUpdateState(&state, update)
 	if err != nil {
 		if changed {
@@ -293,6 +293,24 @@ func emailOtpVerifyResultFromIQ(node chatdNode) EngineAccountSettingsResult {
 
 func malformedAccountSettingsResult(message string) EngineAccountSettingsResult {
 	return EngineAccountSettingsResult{Status: waappv1.AccountSettingsOperationStatus_ACCOUNT_SETTINGS_OPERATION_STATUS_REJECTED, Err: NewError(waappv1.WaErrorCode_WA_ERROR_CODE_REJECTED, message, false)}
+}
+
+func accountSettingsRequestError(err error) error {
+	if accountSettingsTimeoutError(err) {
+		return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_REJECTED, accountSettingsRequestTimeoutMessage, true)
+	}
+	return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_REJECTED, "native account settings request failed", accountSettingsRetryableError(err))
+}
+
+func accountSettingsTimeoutError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "timed out") || strings.Contains(lower, "timeout") || strings.Contains(lower, "deadline")
 }
 
 func accountSettingsRetryableError(err error) bool {

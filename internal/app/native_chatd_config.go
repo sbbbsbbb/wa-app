@@ -18,6 +18,12 @@ func chatdConfigForState(proxyURL string, state nativeState, timeout time.Durati
 	return cfg
 }
 
+func accountSettingsChatdConfig(proxyURL string, state nativeState) chatdClientConfig {
+	cfg := chatdConfigForState(proxyURL, state, defaultAccountIQTimeout)
+	cfg.OpenTimeout = defaultAccountSettingsOpenTimeout
+	return cfg
+}
+
 func chatdEndpointsForState(state nativeState) []chatdEndpoint {
 	endpoints := []chatdEndpoint{}
 	if state.ChatConnection.LastHost != "" && state.ChatConnection.LastPort > 0 {

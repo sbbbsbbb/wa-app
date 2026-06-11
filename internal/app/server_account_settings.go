@@ -209,7 +209,9 @@ func (s *Server) applyAccountSettings(ctx context.Context, requestContext *waapp
 }
 
 func (s *Server) applyAccountSettingsResult(ctx context.Context, requestContext *waappv1.RequestContext, selector *waappv1.AccountLoginSelector, kind waappv1.AccountSettingsOperationKind, enrich func(EngineAccountSettingsInput) EngineAccountSettingsInput) (*waappv1.AccountSettingsOperation, EngineAccountSettingsResult, error) {
-	loginState, err := s.accountSettingsLoginState(ctx, selector)
+	operationCtx, cancel := accountSettingsOperationContext(ctx)
+	defer cancel()
+	loginState, err := s.accountSettingsLoginState(operationCtx, selector)
 	if err != nil {
 		return nil, EngineAccountSettingsResult{}, err
 	}
@@ -223,12 +225,12 @@ func (s *Server) applyAccountSettingsResult(ctx context.Context, requestContext 
 	if enrich != nil {
 		input = enrich(input)
 	}
-	runner, release, err := s.accountSettingsRunner(ctx, requestContext, loginState, kind)
+	runner, release, err := s.accountSettingsRunner(operationCtx, requestContext, loginState, kind)
 	if err != nil {
 		return nil, EngineAccountSettingsResult{}, err
 	}
 	defer release()
-	result := runner.ApplyAccountSettings(ctx, input)
+	result := runner.ApplyAccountSettings(operationCtx, input)
 	completedAt := s.clock.Now()
 	op := &waappv1.AccountSettingsOperation{
 		AccountSettingsOperationId: s.ids.NewID("waacctset_"),
@@ -248,16 +250,18 @@ func (s *Server) applyAccountSettingsResult(ctx context.Context, requestContext 
 }
 
 func (s *Server) refreshTwoFactorAuthStatus(ctx context.Context, requestContext *waappv1.RequestContext, selector *waappv1.AccountLoginSelector) (*waappv1.TwoFactorAuthStatus, *waappv1.WaError, error) {
-	loginState, err := s.accountSettingsLoginState(ctx, selector)
+	operationCtx, cancel := accountSettingsOperationContext(ctx)
+	defer cancel()
+	loginState, err := s.accountSettingsLoginState(operationCtx, selector)
 	if err != nil {
 		return nil, nil, err
 	}
-	runner, release, err := s.accountSettingsRunner(ctx, requestContext, loginState, waappv1.AccountSettingsOperationKind_ACCOUNT_SETTINGS_OPERATION_KIND_TWO_FACTOR_AUTH_STATUS_GET)
+	runner, release, err := s.accountSettingsRunner(operationCtx, requestContext, loginState, waappv1.AccountSettingsOperationKind_ACCOUNT_SETTINGS_OPERATION_KIND_TWO_FACTOR_AUTH_STATUS_GET)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer release()
-	result := runner.ApplyAccountSettings(ctx, EngineAccountSettingsInput{
+	result := runner.ApplyAccountSettings(operationCtx, EngineAccountSettingsInput{
 		WAAccountID:          loginState.GetWaAccountId(),
 		ClientProfileID:      loginState.GetClientProfileId(),
 		RegisteredIdentityID: loginState.GetRegisteredIdentityId(),
@@ -271,7 +275,7 @@ func (s *Server) refreshTwoFactorAuthStatus(ctx context.Context, requestContext 
 	if status == nil {
 		status = &waappv1.TwoFactorAuthStatus{}
 	}
-	if err := s.saveTwoFactorAuthStatus(ctx, loginState.GetWaAccountId(), status, s.clock.Now()); err != nil {
+	if err := s.saveTwoFactorAuthStatus(operationCtx, loginState.GetWaAccountId(), status, s.clock.Now()); err != nil {
 		return nil, nil, err
 	}
 	return status, nil, nil
@@ -395,6 +399,13 @@ func accountSettingsCompletedAt(op *waappv1.AccountSettingsOperation, fallback t
 	return completedAt
 }
 
+func accountSettingsOperationContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(ctx, defaultAccountSettingsOperationTimeout)
+}
+
 func (s *Server) accountSettingsRunner(ctx context.Context, requestContext *waappv1.RequestContext, loginState *waappv1.LoginState, kind waappv1.AccountSettingsOperationKind) (ProtocolEngine, func(), error) {
 	if s.longConnections != nil {
 		if runner := s.longConnections.Runner(loginState); runner != nil {
@@ -410,7 +421,7 @@ func (s *Server) accountSettingsRunner(ctx context.Context, requestContext *waap
 		Username:      s.accountSettingsProxyUsername,
 		Purpose:       "WA_ACCOUNT_SETTINGS",
 		CorrelationID: firstNonEmpty(requestContext.GetCorrelationId(), requestContext.GetRequestId()),
-		TTL:           defaultAccountIQTimeout + 10*time.Second,
+		TTL:           defaultAccountSettingsProxyTTL,
 		Mode:          DynamicProxySessionModeSticky,
 	})
 	return proxied, release, nil
