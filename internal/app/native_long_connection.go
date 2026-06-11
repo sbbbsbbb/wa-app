@@ -19,15 +19,30 @@ type longConnectionNativeEngine struct {
 	*NativeEngine
 
 	mu          sync.Mutex
+	cond        *sync.Cond
 	session     *chatdSession
+	input       EngineMessageInput
+	pending     []chatdReceivedItem
+	pendingUp   chatdSessionUpdate
+	activeRead  *longConnectionActiveRead
+	iqWaiters   int
+	iqInFlight  bool
+	closed      bool
 	fallback    *NativeEngine
 	release     func()
 	releaseOnce sync.Once
 }
 
+type longConnectionActiveRead struct {
+	cancel    context.CancelFunc
+	done      chan struct{}
+	preempted bool
+}
+
 type longConnectionNativeEngineOptions struct {
 	Release  func()
 	Fallback *NativeEngine
+	Input    EngineMessageInput
 }
 
 var longConnectionProxySessionFallbackLogs = proxyLogLimiter{last: map[string]time.Time{}}
@@ -37,13 +52,18 @@ func newLongConnectionNativeEngine(engine *NativeEngine, opts longConnectionNati
 	if cleanup == nil {
 		cleanup = func() {}
 	}
-	return &longConnectionNativeEngine{NativeEngine: engine, fallback: opts.Fallback, release: cleanup}
+	runner := &longConnectionNativeEngine{NativeEngine: engine, fallback: opts.Fallback, input: opts.Input, release: cleanup}
+	runner.cond = sync.NewCond(&runner.mu)
+	return runner
 }
 
 func (e *longConnectionNativeEngine) Close() error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.closed = true
+	e.preemptActiveReadLocked()
 	err := e.closeLocked()
+	e.broadcastLocked()
+	e.mu.Unlock()
 	e.releaseProxyRoute()
 	return err
 }
@@ -51,6 +71,15 @@ func (e *longConnectionNativeEngine) Close() error {
 func (e *longConnectionNativeEngine) ReceiveMessageBatch(ctx context.Context, input EngineMessageInput) EngineMessageBatchResult {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if err := e.waitForInteractiveIQLocked(ctx); err != nil {
+		return EngineMessageBatchResult{Err: err}
+	}
+	if e.closed {
+		return EngineMessageBatchResult{Err: NewError(waappv1.WaErrorCode_WA_ERROR_CODE_CONFLICT, "WA long connection runner is closed", true)}
+	}
+	if input.MessageSessionID != "" {
+		e.input = input
+	}
 
 	session, err := e.ensureSessionWithTimeoutLocked(ctx, input)
 	if err != nil {
@@ -58,18 +87,28 @@ func (e *longConnectionNativeEngine) ReceiveMessageBatch(ctx context.Context, in
 		return EngineMessageBatchResult{Err: chatdReceiveError(err)}
 	}
 	now := e.clock.Now()
-	messages, payloads, update, err := session.receiveBatch(input, now)
-	if err != nil {
-		e.closeLocked()
-		session, retryErr := e.ensureSessionWithTimeoutLocked(ctx, input)
-		if retryErr != nil {
-			return EngineMessageBatchResult{Err: chatdReceiveError(retryErr)}
-		}
-		now = e.clock.Now()
-		messages, payloads, update, err = session.receiveBatch(input, now)
+	messages, payloads, update, drained := e.drainPendingLocked(input)
+	if !drained {
+		var preempted bool
+		messages, payloads, update, err, preempted = e.receiveBatchWithActiveReadLocked(ctx, session, input, now)
 		if err != nil {
+			if preempted {
+				return EngineMessageBatchResult{}
+			}
 			e.closeLocked()
-			return EngineMessageBatchResult{Err: chatdReceiveError(err)}
+			session, retryErr := e.ensureSessionWithTimeoutLocked(ctx, input)
+			if retryErr != nil {
+				return EngineMessageBatchResult{Err: chatdReceiveError(retryErr)}
+			}
+			now = e.clock.Now()
+			messages, payloads, update, err, preempted = e.receiveBatchWithActiveReadLocked(ctx, session, input, now)
+			if err != nil {
+				if preempted {
+					return EngineMessageBatchResult{}
+				}
+				e.closeLocked()
+				return EngineMessageBatchResult{Err: chatdReceiveError(err)}
+			}
 		}
 	}
 	if len(payloads) > 0 || len(update.ContactHints) > 0 || update.RoutingInfo != "" || update.Endpoint.Host != "" || update.ServerStaticPublic != "" {
@@ -86,6 +125,265 @@ func (e *longConnectionNativeEngine) ReceiveMessageBatch(ctx context.Context, in
 		}
 	}
 	return EngineMessageBatchResult{Messages: messages, Contacts: contactsFromContactHints(input.WAAccountID, nil, update.ContactHints, now)}
+}
+
+func (e *longConnectionNativeEngine) ResolveContactProfilePicture(ctx context.Context, input EngineContactProfilePictureInput) EngineContactProfilePictureResult {
+	if e == nil || e.NativeEngine == nil {
+		return EngineContactProfilePictureResult{Err: NewError(waappv1.WaErrorCode_WA_ERROR_CODE_INTERNAL, "native engine is required", false)}
+	}
+	return e.NativeEngine.resolveContactProfilePictureWithSender(ctx, input, e)
+}
+
+func (e *longConnectionNativeEngine) ApplyAccountSettings(ctx context.Context, input EngineAccountSettingsInput) EngineAccountSettingsResult {
+	if e == nil || e.NativeEngine == nil {
+		return EngineAccountSettingsResult{Status: waappv1.AccountSettingsOperationStatus_ACCOUNT_SETTINGS_OPERATION_STATUS_REJECTED, Err: NewError(waappv1.WaErrorCode_WA_ERROR_CODE_INTERNAL, "native engine is required", false)}
+	}
+	state, err := e.loadState(ctx, input.ClientProfileID)
+	if err != nil {
+		return EngineAccountSettingsResult{Status: waappv1.AccountSettingsOperationStatus_ACCOUNT_SETTINGS_OPERATION_STATUS_REJECTED, Err: err}
+	}
+	if state.ChatStatic.Private == "" || state.ChatStatic.Public == "" {
+		state.ChatStatic = ensureChatStatic(state.ChatStatic)
+		_ = e.saveState(ctx, input.ClientProfileID, state)
+	}
+	return e.NativeEngine.applyAccountSettingsWithSender(ctx, input, state, e)
+}
+
+func (e *longConnectionNativeEngine) sendIQ(ctx context.Context, state nativeState, registeredIdentityID string, appVersion string, request chatdNode, timeoutMessage string) (chatdNode, chatdSessionUpdate, error) {
+	if err := e.lockInteractiveIQLocked(ctx); err != nil {
+		return chatdNode{}, chatdSessionUpdate{}, err
+	}
+	defer e.unlockInteractiveIQLocked()
+	if e.closed {
+		return chatdNode{}, chatdSessionUpdate{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_CONFLICT, "WA long connection runner is closed", true)
+	}
+	input := e.input
+	if input.RegisteredIdentityID == "" {
+		input.RegisteredIdentityID = registeredIdentityID
+	}
+	session, err := e.ensureSessionForIQLocked(ctx, input, state)
+	if err != nil {
+		e.closeLocked()
+		return chatdNode{}, chatdSessionUpdate{}, err
+	}
+	response, items, update, err := sendChatdIQWithContext(ctx, session, input, request, contextBoundTimeout(ctx, defaultAccountIQTimeout), timeoutMessage)
+	e.bufferPendingLocked(items, update)
+	if err != nil {
+		e.closeLocked()
+		return chatdNode{}, update, err
+	}
+	return response, update, nil
+}
+
+func (e *longConnectionNativeEngine) ensureSessionForIQLocked(ctx context.Context, input EngineMessageInput, state nativeState) (*chatdSession, error) {
+	if e.session != nil {
+		return e.session, nil
+	}
+	if input.ClientProfileID != "" {
+		openCtx, cancel := context.WithTimeout(ctx, longConnectionChatdOpenTimeout)
+		defer cancel()
+		return e.ensureSessionLocked(openCtx, input)
+	}
+	openCtx, cancel := context.WithTimeout(ctx, longConnectionChatdOpenTimeout)
+	defer cancel()
+	session, err := e.openSessionWithEngine(openCtx, e.NativeEngine, input, state)
+	if err == nil {
+		e.session = session
+		return session, nil
+	}
+	if reason := longConnectionProxySessionFallbackReason(err); reason != "" && e.fallback != nil {
+		if session, fallbackErr := e.openSessionWithEngine(openCtx, e.fallback, input, state); fallbackErr == nil {
+			e.releaseProxyRoute()
+			e.NativeEngine = e.fallback
+			e.fallback = nil
+			e.session = session
+			logLongConnectionProxySessionFallback(reason)
+			return session, nil
+		}
+	}
+	return nil, err
+}
+
+func (e *longConnectionNativeEngine) drainPendingLocked(input EngineMessageInput) ([]*waappv1.InboundMessage, []chatdEncPayload, chatdSessionUpdate, bool) {
+	if len(e.pending) == 0 && !hasChatdSessionUpdate(e.pendingUp) {
+		return nil, nil, chatdSessionUpdate{}, false
+	}
+	limit := input.MaxMessages
+	if limit <= 0 {
+		limit = 10
+	}
+	count := len(e.pending)
+	if count > limit {
+		count = limit
+	}
+	items := append([]chatdReceivedItem(nil), e.pending[:count]...)
+	e.pending = append([]chatdReceivedItem(nil), e.pending[count:]...)
+	update := e.pendingUp
+	e.pendingUp = chatdSessionUpdate{}
+	messages, payloads := splitReceivedItems(items)
+	return messages, payloads, update, true
+}
+
+func (e *longConnectionNativeEngine) bufferPendingLocked(items []chatdReceivedItem, update chatdSessionUpdate) {
+	if len(items) == 0 && len(update.ContactHints) == 0 {
+		return
+	}
+	e.pending = append(e.pending, items...)
+	e.pendingUp = mergeChatdSessionUpdate(e.pendingUp, update)
+}
+
+func (e *longConnectionNativeEngine) receiveBatchWithActiveReadLocked(ctx context.Context, session *chatdSession, input EngineMessageInput, now time.Time) ([]*waappv1.InboundMessage, []chatdEncPayload, chatdSessionUpdate, error, bool) {
+	read, readCtx := e.startActiveReadLocked(ctx)
+	e.mu.Unlock()
+	messages, payloads, update, err := receiveChatdBatchWithContext(readCtx, session, input, now)
+	e.mu.Lock()
+	preempted := e.finishActiveReadLocked(read)
+	return messages, payloads, update, err, preempted
+}
+
+func (e *longConnectionNativeEngine) startActiveReadLocked(ctx context.Context) (*longConnectionActiveRead, context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	readCtx, cancel := context.WithCancel(ctx)
+	read := &longConnectionActiveRead{cancel: cancel, done: make(chan struct{})}
+	e.activeRead = read
+	return read, readCtx
+}
+
+func (e *longConnectionNativeEngine) finishActiveReadLocked(read *longConnectionActiveRead) bool {
+	if read == nil {
+		return false
+	}
+	read.cancel()
+	preempted := read.preempted
+	if e.activeRead == read {
+		e.activeRead = nil
+	}
+	if preempted {
+		_ = e.closeLocked()
+	}
+	close(read.done)
+	e.broadcastLocked()
+	return preempted
+}
+
+func (e *longConnectionNativeEngine) preemptActiveReadLocked() {
+	if e.activeRead == nil {
+		return
+	}
+	e.activeRead.preempted = true
+	e.activeRead.cancel()
+}
+
+func (e *longConnectionNativeEngine) waitForInteractiveIQLocked(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stop := context.AfterFunc(ctx, func() {
+		e.mu.Lock()
+		e.broadcastLocked()
+		e.mu.Unlock()
+	})
+	defer stop()
+	for e.iqWaiters > 0 || e.iqInFlight {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if e.closed {
+			return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_CONFLICT, "WA long connection runner is closed", true)
+		}
+		e.conditionLocked().Wait()
+	}
+	return ctx.Err()
+}
+
+func (e *longConnectionNativeEngine) lockInteractiveIQLocked(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	stop := context.AfterFunc(ctx, func() {
+		e.mu.Lock()
+		e.broadcastLocked()
+		e.mu.Unlock()
+	})
+	e.mu.Lock()
+	e.iqWaiters++
+	for {
+		if err := ctx.Err(); err != nil {
+			e.iqWaiters--
+			e.broadcastLocked()
+			e.mu.Unlock()
+			stop()
+			return err
+		}
+		if e.closed {
+			e.iqWaiters--
+			e.broadcastLocked()
+			e.mu.Unlock()
+			stop()
+			return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_CONFLICT, "WA long connection runner is closed", true)
+		}
+		if e.activeRead != nil {
+			read := e.activeRead
+			read.preempted = true
+			read.cancel()
+			done := read.done
+			e.mu.Unlock()
+			select {
+			case <-done:
+			case <-ctx.Done():
+				e.mu.Lock()
+				e.iqWaiters--
+				e.broadcastLocked()
+				e.mu.Unlock()
+				stop()
+				return ctx.Err()
+			}
+			e.mu.Lock()
+			continue
+		}
+		if !e.iqInFlight {
+			e.iqWaiters--
+			e.iqInFlight = true
+			e.broadcastLocked()
+			stop()
+			return nil
+		}
+		e.conditionLocked().Wait()
+	}
+}
+
+func (e *longConnectionNativeEngine) unlockInteractiveIQLocked() {
+	e.iqInFlight = false
+	e.broadcastLocked()
+	e.mu.Unlock()
+}
+
+func (e *longConnectionNativeEngine) conditionLocked() *sync.Cond {
+	if e.cond == nil {
+		e.cond = sync.NewCond(&e.mu)
+	}
+	return e.cond
+}
+
+func (e *longConnectionNativeEngine) broadcastLocked() {
+	if e.cond != nil {
+		e.cond.Broadcast()
+	}
+}
+
+func contextBoundTimeout(ctx context.Context, fallback time.Duration) time.Duration {
+	if fallback <= 0 {
+		fallback = defaultChatdReadWindow
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining > 0 && remaining < fallback {
+			return remaining
+		}
+	}
+	return fallback
 }
 
 func (e *longConnectionNativeEngine) ensureSessionWithTimeoutLocked(ctx context.Context, input EngineMessageInput) (*chatdSession, error) {
@@ -141,7 +439,7 @@ func (e *longConnectionNativeEngine) openSessionWithEngine(ctx context.Context, 
 	cfg := chatdConfigForState(proxyURL, state, longConnectionChatdAttemptTimeout)
 	cfg.Endpoints = longConnectionChatdEndpoints(state)
 	client := newChatdClient(cfg)
-	session, err := client.openSession(ctx, state, input.RegisteredIdentityID, defaultLoginPayload, defaultWAAppVersion)
+	session, err := client.openSession(ctx, state, input.RegisteredIdentityID, defaultLoginPayload, input.AppVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -216,6 +514,25 @@ func (e *longConnectionNativeEngine) closeLocked() error {
 	err := e.session.Close()
 	e.session = nil
 	return err
+}
+
+func receiveChatdBatchWithContext(ctx context.Context, session *chatdSession, input EngineMessageInput, now time.Time) ([]*waappv1.InboundMessage, []chatdEncPayload, chatdSessionUpdate, error) {
+	stopContextClose := closeChatdSessionOnContext(ctx, session)
+	defer stopContextClose()
+	return session.receiveBatch(input, now)
+}
+
+func sendChatdIQWithContext(ctx context.Context, session *chatdSession, input EngineMessageInput, request chatdNode, timeout time.Duration, timeoutMessage string) (chatdNode, []chatdReceivedItem, chatdSessionUpdate, error) {
+	stopContextClose := closeChatdSessionOnContext(ctx, session)
+	defer stopContextClose()
+	return session.sendIQ(ctx, input, request, timeout, timeoutMessage)
+}
+
+func closeChatdSessionOnContext(ctx context.Context, session *chatdSession) func() {
+	if session == nil {
+		return func() {}
+	}
+	return closeChatdConnOnContext(ctx, session.conn)
 }
 
 var _ ProtocolEngine = (*longConnectionNativeEngine)(nil)

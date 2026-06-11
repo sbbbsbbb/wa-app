@@ -53,6 +53,7 @@ FROM wa_sqlite_inbound_messages m
 JOIN wa_sqlite_message_sessions s ON s.id=m.message_session_id
 WHERE s.wa_account_id=?
   AND json_extract(m.payload, '$.kind')=?
+  AND COALESCE(json_extract(m.payload, '$.direction'), 'ACCOUNT_MESSAGE_DIRECTION_INBOUND')='ACCOUNT_MESSAGE_DIRECTION_INBOUND'
   AND json_extract(m.payload, '$.read_at') IS NULL
   AND ` + inClause + `
   AND COALESCE(json_extract(m.payload, '$.delete_status'), 'MESSAGE_DELETE_STATUS_NOT_DELETED')<>'MESSAGE_DELETE_STATUS_DELETED_FOR_ME'

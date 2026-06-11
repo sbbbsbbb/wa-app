@@ -32,7 +32,7 @@ type dashboardHTTP struct {
 	actionHandler http.Handler
 }
 
-func runDashboardHTTP(ctx context.Context, listenAddr, staticDir string, service *app.Server, actionHandler http.Handler) error {
+func runDashboardHTTP(ctx context.Context, listenAddr, staticDir string, service *app.Server, actionHandler http.Handler, auth dashboardAuthConfig) error {
 	if strings.TrimSpace(listenAddr) == "" {
 		return nil
 	}
@@ -46,6 +46,7 @@ func runDashboardHTTP(ctx context.Context, listenAddr, staticDir string, service
 	mux.HandleFunc("/api/wa/phone/sms-probe", server.handlePhoneSMSProbe)
 	mux.HandleFunc("/api/wa/register", server.handleRegister)
 	mux.HandleFunc("/api/wa/login-state-check", server.handleLoginStateCheck)
+	mux.HandleFunc("/api/wa/account-settings/2fa/status", server.handleGetTwoFactorAuthStatus)
 	mux.HandleFunc("/api/wa/account-settings/2fa", server.handleSetTwoFactorAuthSettings)
 	mux.HandleFunc("/api/wa/account-settings/email", server.handleSetAccountEmail)
 	mux.HandleFunc("/api/wa/account-settings/email/otp/request", server.handleRequestAccountEmailOtp)
@@ -59,6 +60,7 @@ func runDashboardHTTP(ctx context.Context, listenAddr, staticDir string, service
 	mux.HandleFunc("/api/wa/account-otp-messages", server.handleAccountOTPMessages)
 	mux.HandleFunc("/api/wa/messages/read", server.handleMarkMessagesRead)
 	mux.HandleFunc("/api/wa/messages/delete", server.handleDeleteMessages)
+	mux.HandleFunc("/api/wa/messages/send", server.handleSendTextMessage)
 	mux.HandleFunc("/api/wa/messages", server.handleMessages)
 	mux.HandleFunc("/api/wa/contacts/resolve", server.handleResolveContacts)
 	mux.HandleFunc("/api/wa/contacts/", server.handleContactResource)
@@ -68,7 +70,7 @@ func runDashboardHTTP(ctx context.Context, listenAddr, staticDir string, service
 	mux.HandleFunc("/mf/wa/", http.NotFound)
 	mux.HandleFunc("/healthz", server.handleHealth)
 	mux.Handle("/", standaloneDashboard(server.staticDir))
-	httpServer := &http.Server{Addr: listenAddr, Handler: withCORS(mux), ReadHeaderTimeout: 5 * time.Second}
+	httpServer := &http.Server{Addr: listenAddr, Handler: withCORS(withOptionalDashboardAuth(mux, auth)), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -176,7 +178,7 @@ func (s *dashboardHTTP) handleAccountProfilePicture(w http.ResponseWriter, r *ht
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "wa_account_id is required"})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 	picture, err := s.service.GetWAAccountProfilePicture(ctx, accountID)
 	if err != nil {
@@ -352,6 +354,33 @@ func (s *dashboardHTTP) handleDeleteMessages(w http.ResponseWriter, r *http.Requ
 	writeProtoJSON(w, http.StatusOK, resp)
 }
 
+func (s *dashboardHTTP) handleSendTextMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w, http.MethodPost)
+		return
+	}
+	if s.service == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "wa-app service is not configured"})
+		return
+	}
+	payload, ok := readJSONPayload(w, r)
+	if !ok {
+		return
+	}
+	resp, err := s.service.SendTextMessage(r.Context(), &waappv1.SendTextMessageRequest{
+		Context:         &waappv1.RequestContext{RequestId: firstNonEmpty(textField(payload, "request_id"), newRequestID("wa-message-send"))},
+		WaAccountId:     textField(payload, "wa_account_id"),
+		ContactRef:      textField(payload, "contact_ref"),
+		Text:            &waappv1.SensitiveText{Value: textField(payload, "text")},
+		ClientMessageId: textField(payload, "client_message_id"),
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "send WA text message failed"})
+		return
+	}
+	writeProtoJSON(w, http.StatusOK, resp)
+}
+
 func (s *dashboardHTTP) handleContacts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w, http.MethodGet)
@@ -431,7 +460,7 @@ func (s *dashboardHTTP) handleContactProfilePicture(w http.ResponseWriter, r *ht
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "contact id is required"})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 	picture, err := s.service.GetWAContactProfilePicture(ctx, contactID)
 	if err != nil {
@@ -442,7 +471,7 @@ func (s *dashboardHTTP) handleContactProfilePicture(w http.ResponseWriter, r *ht
 }
 
 func writeProfilePictureNotFound(w http.ResponseWriter) {
-	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.Header().Set("Cache-Control", "private, max-age=30")
 	w.WriteHeader(http.StatusNotFound)
 }
 
@@ -826,7 +855,7 @@ func methodNotAllowed(w http.ResponseWriter, allowed string) {
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

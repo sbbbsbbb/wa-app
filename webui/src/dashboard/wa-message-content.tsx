@@ -1,43 +1,32 @@
-import { ExternalLink, FileText, Image, ListChecks, MapPin, Package, Smile, UserRound } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import { normalizeWaMessageText } from './wa-message-rich-text';
 
 const RICH_PREFIXES = [
-  { prefix: '[商品]', label: '商品', icon: Package },
-  { prefix: '[模板]', label: '模板消息', icon: ListChecks },
-  { prefix: '[模板回复]', label: '模板回复', icon: ListChecks },
-  { prefix: '[图片]', label: '图片', icon: Image },
-  { prefix: '[视频]', label: '视频', icon: Image },
-  { prefix: '[圆形视频]', label: '圆形视频', icon: Image },
-  { prefix: '[文件]', label: '文件', icon: FileText },
-  { prefix: '[语音]', label: '语音', icon: FileText },
-  { prefix: '[联系人]', label: '联系人', icon: UserRound },
-  { prefix: '[位置]', label: '位置', icon: MapPin },
-  { prefix: '[实时位置]', label: '实时位置', icon: MapPin },
-  { prefix: '[按钮]', label: '按钮', icon: ListChecks },
-  { prefix: '[按钮回复]', label: '按钮回复', icon: ListChecks },
-  { prefix: '[互动]', label: '互动消息', icon: ListChecks },
-  { prefix: '[互动回复]', label: '互动回复', icon: ListChecks },
-  { prefix: '[列表]', label: '列表', icon: ListChecks },
-  { prefix: '[列表回复]', label: '列表回复', icon: ListChecks },
-  { prefix: '[投票]', label: '投票', icon: ListChecks },
-  { prefix: '[订单]', label: '订单', icon: Package },
-  { prefix: '[回应]', label: '回应', icon: Smile },
+  '[商品]',
+  '[模板]',
+  '[模板回复]',
+  '[图片]',
+  '[视频]',
+  '[圆形视频]',
+  '[文件]',
+  '[语音]',
+  '[联系人]',
+  '[位置]',
+  '[实时位置]',
+  '[按钮]',
+  '[按钮回复]',
+  '[互动]',
+  '[互动回复]',
+  '[列表]',
+  '[列表回复]',
+  '[投票]',
+  '[订单]',
+  '[回应]',
 ];
 
 export function WaMessageContent({ text }: { text: string }) {
   const displayText = normalizeWaMessageText(text);
-  const rich = parseRichMessage(displayText);
-  if (!rich) return <MessageLines text={displayText} />;
-  const Icon = rich.icon;
-  return (
-    <div className="min-w-0 space-y-2">
-      <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
-        <Icon size={14} />
-        <span>{rich.label}</span>
-      </div>
-      {rich.body ? <MessageLines text={rich.body} /> : null}
-    </div>
-  );
+  return <MessageLines text={stripRichPrefix(displayText)} />;
 }
 
 function MessageLines({ text }: { text: string }) {
@@ -59,13 +48,22 @@ function MessageLines({ text }: { text: string }) {
 function linkify(line: string) {
   const tokens = line.split(/(https?:\/\/\S+)/g);
   return tokens.map((token, index) => {
-    if (!/^https?:\/\//.test(token)) return token;
+    if (!/^https?:\/\//.test(token)) return markdownInline(token, `text-${index}`);
     const url = trimLink(token);
     return (
       <a className="text-emerald-700 underline underline-offset-2" href={url} key={`${index}-${token}`} rel="noreferrer" target="_blank">
         {url}
       </a>
     );
+  });
+}
+
+function markdownInline(text: string, keyPrefix: string) {
+  const parts = text.split(/(\*[^*\n]{1,120}\*)/g);
+  return parts.map((part, index) => {
+    const match = part.match(/^\*([^*\n].*?)\*$/);
+    if (!match) return part;
+    return <strong className="font-semibold text-foreground" key={`${keyPrefix}-${index}`}>{match[1]}</strong>;
   });
 }
 
@@ -84,13 +82,13 @@ function LinkPreview({ url }: { url: string }) {
   );
 }
 
-function parseRichMessage(text: string) {
+function stripRichPrefix(text: string) {
   const value = text.trim();
-  for (const item of RICH_PREFIXES) {
-    if (value === item.prefix) return { ...item, body: '' };
-    if (value.startsWith(`${item.prefix} `)) return { ...item, body: value.slice(item.prefix.length).trim() };
+  for (const prefix of RICH_PREFIXES) {
+    if (value === prefix) return '';
+    if (value.startsWith(`${prefix} `)) return value.slice(prefix.length).trim();
   }
-  return null;
+  return text;
 }
 
 function firstLink(lines: string[]) {

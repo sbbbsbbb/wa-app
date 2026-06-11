@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"google.golang.org/protobuf/encoding/protowire"
@@ -27,6 +28,10 @@ type waProtoField struct {
 type waMessageTextCandidate struct {
 	value string
 	score int
+}
+
+func newWAMessageTextCandidate(value string, score int) waMessageTextCandidate {
+	return waMessageTextCandidate{value: value, score: score + waDisplayTextQuality(value)}
 }
 
 var waJSONTextKeys = []string{
@@ -117,13 +122,13 @@ func collectWAMessageText(raw []byte, path []protowire.Number, depth int, candid
 		}
 		fieldPath := appendWAPath(path, field.number)
 		if value, score, ok := waKnownTextField(fieldPath, field.value); ok {
-			*candidates = append(*candidates, waMessageTextCandidate{value: value, score: score})
+			*candidates = append(*candidates, newWAMessageTextCandidate(value, score))
 		}
 		if value, score, ok := waCompositeTextField(fieldPath, field.value); ok {
-			*candidates = append(*candidates, waMessageTextCandidate{value: value, score: score})
+			*candidates = append(*candidates, newWAMessageTextCandidate(value, score))
 		}
 		if value, score, ok := waMessagePlaceholder(fieldPath); ok {
-			*candidates = append(*candidates, waMessageTextCandidate{value: value, score: score})
+			*candidates = append(*candidates, newWAMessageTextCandidate(value, score))
 		}
 		collectWAMessageText(field.value, fieldPath, depth+1, candidates)
 	}
@@ -208,11 +213,16 @@ func waKnownTextField(path []protowire.Number, raw []byte) (string, int, bool) {
 	if jsonText := waJSONDisplayText(text); jsonText != "" {
 		text = jsonText
 	}
+	if isLikelyMachineText(text) || isLikelyShortMachineFragment(text) {
+		return "", 0, false
+	}
 	paramText := waTemplateParamDisplayText(raw)
 	normalized := normalizeWAMessagePath(path)
 	switch {
 	case sameWAPath(normalized, 1):
 		return text, 1000, true
+	case sameWAPath(normalized, 6):
+		return text, 1005, true
 	case suffixWAPath(normalized, 6, 1):
 		return text, 995, true
 	case suffixWAPath(normalized, 6, 5), suffixWAPath(normalized, 6, 6):
@@ -1127,7 +1137,7 @@ func waCleanDisplayText(raw []byte) string {
 	if len(raw) == 0 || !utf8.Valid(raw) {
 		return ""
 	}
-	text := strings.TrimSpace(string(raw))
+	text := normalizeWAFramedDisplayText(strings.TrimSpace(string(raw)))
 	if text == "" || strings.ContainsRune(text, 0) || !readableText(text) {
 		return ""
 	}
@@ -1135,17 +1145,49 @@ func waCleanDisplayText(raw []byte) string {
 }
 
 func waHumanDisplayText(text string) string {
-	text = strings.TrimSpace(text)
+	text = normalizeWAFramedDisplayText(strings.TrimSpace(text))
 	if text == "" {
 		return ""
 	}
 	if jsonText := waJSONDisplayText(text); jsonText != "" {
 		return jsonText
 	}
-	if isLikelyMachineToken(text) || isLikelyMachineText(text) {
+	if isLikelyMachineToken(text) || isLikelyMachineText(text) || isLikelyShortMachineFragment(text) {
 		return ""
 	}
 	return trimWARunes(text, waDisplayTextMaxRunes)
+}
+
+func normalizeWAFramedDisplayText(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) >= 3 && text[0] == '2' && (text[2] == '*' || text[2] >= '0' && text[2] <= '9') {
+		text = strings.TrimSpace(text[2:])
+	}
+	lower := strings.ToLower(text)
+	if !strings.Contains(lower, "verification code") {
+		return text
+	}
+	if strings.HasSuffix(text, ".:") || strings.HasSuffix(text, ".;") {
+		text = text[:len(text)-1]
+	}
+	return trimWAUppercaseFrameTail(text)
+}
+
+func trimWAUppercaseFrameTail(text string) string {
+	end := len(text)
+	start := end
+	for start > 0 && text[start-1] >= 'A' && text[start-1] <= 'Z' {
+		start--
+	}
+	if start == end || end-start > 3 || start == 0 {
+		return text
+	}
+	switch text[start-1] {
+	case '.', '!', '?':
+		return text[:start]
+	default:
+		return text
+	}
 }
 
 func isLikelyMachineText(text string) bool {
@@ -1315,6 +1357,61 @@ func isLikelyMachineToken(text string) bool {
 		}
 	}
 	return (letters+digits+other)*100/utf8.RuneCountInString(text) > 95 && strings.Count(text, " ") == 0
+}
+
+func waDisplayTextQuality(text string) int {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return -1000
+	}
+	score := 0
+	if containsCJK(text) {
+		score += 120
+	}
+	if nativeSensitiveDigitsPattern.MatchString(text) {
+		score += 90
+	}
+	if strings.ContainsAny(text, " .,:;!?，。！？：；\n") {
+		score += 40
+	}
+	if isLikelyShortMachineFragment(text) {
+		score -= 900
+	}
+	return score
+}
+
+func containsCJK(text string) bool {
+	for _, r := range text {
+		if unicode.Is(unicode.Han, r) || unicode.In(r, unicode.Hiragana, unicode.Katakana, unicode.Hangul) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLikelyShortMachineFragment(text string) bool {
+	text = strings.TrimSpace(text)
+	runes := utf8.RuneCountInString(text)
+	if runes < 4 || runes > 12 || strings.ContainsAny(text, " \n\r\t") || nativeSensitiveDigitsPattern.MatchString(text) {
+		return false
+	}
+	letters := 0
+	digits := 0
+	symbols := 0
+	for _, r := range text {
+		switch {
+		case r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z':
+			letters++
+		case r >= '0' && r <= '9':
+			digits++
+		case r < utf8.RuneSelf:
+			symbols++
+		}
+	}
+	if letters == 0 || letters+digits+symbols != runes {
+		return false
+	}
+	return strings.ContainsAny(text, "|\\^~`")
 }
 
 func uniqueNonEmptyStrings(values ...string) []string {

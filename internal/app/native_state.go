@@ -20,13 +20,15 @@ import (
 
 const nativeStateSchema = "byte-v-forge-wa-app-native-state/v1"
 
+var nativeUserAgentDevicePattern = regexp.MustCompile(`(?:^|\s)Android/([^ ]+)\s+Device/([^- \t/]+)-([^/\s]+)`)
+
 type nativeState struct {
 	Schema          string                          `json:"schema"`
 	CreatedAtUnix   int64                           `json:"created_at_unix"`
 	CC              string                          `json:"cc"`
 	Phone           string                          `json:"phone"`
 	AuthKey         string                          `json:"authkey"`
-	UserAgent       string                          `json:"user_agent"`
+	PushName        string                          `json:"push_name,omitempty"`
 	Profile         nativePhoneProfile              `json:"profile"`
 	KeyBundle       nativeKeyBundle                 `json:"key_bundle"`
 	LastCodeParams  map[string]string               `json:"last_code_params,omitempty"`
@@ -48,7 +50,9 @@ type nativePhoneProfile struct {
 	Schema              string            `json:"schema"`
 	CreatedAtUnix       int64             `json:"created_at_unix"`
 	PhoneSHA256         string            `json:"phone_sha256"`
-	UserAgent           string            `json:"user_agent"`
+	DeviceVendor        string            `json:"device_vendor"`
+	DeviceModel         string            `json:"device_model"`
+	AndroidVersion      string            `json:"android_version"`
 	FDID                string            `json:"fdid"`
 	ExpID               string            `json:"expid"`
 	ExpIDUUID           string            `json:"expid_uuid"`
@@ -93,6 +97,7 @@ type nativeSignalSession struct {
 	RootKey              string                         `json:"root_key,omitempty"`
 	SenderRatchetPublic  string                         `json:"sender_ratchet_public,omitempty"`
 	SenderRatchetPrivate string                         `json:"sender_ratchet_private,omitempty"`
+	SenderChain          *nativeSenderChain             `json:"sender_chain,omitempty"`
 	ReceiverChains       map[string]nativeReceiverChain `json:"receiver_chains,omitempty"`
 	PreviousCounter      *int                           `json:"previous_counter,omitempty"`
 	RemoteRegistrationID *int                           `json:"remote_registration_id,omitempty"`
@@ -100,7 +105,8 @@ type nativeSignalSession struct {
 }
 
 type nativeAppState struct {
-	Keys map[string]nativeAppStateKey `json:"keys,omitempty"`
+	Keys        map[string]nativeAppStateKey        `json:"keys,omitempty"`
+	Collections map[string]nativeAppStateCollection `json:"collections,omitempty"`
 }
 
 type nativeAppStateKey struct {
@@ -110,11 +116,23 @@ type nativeAppStateKey struct {
 	Timestamp   int64  `json:"timestamp,omitempty"`
 }
 
+type nativeAppStateCollection struct {
+	Version        uint64            `json:"version,omitempty"`
+	Hash           string            `json:"hash,omitempty"`
+	IndexValueMACs map[string]string `json:"index_value_macs,omitempty"`
+}
+
 type nativeReceiverChain struct {
 	RatchetKey string `json:"ratchet_key"`
 	ChainKey   string `json:"chain_key"`
 	Index      int    `json:"index"`
 	RootKey    string `json:"root_key,omitempty"`
+}
+
+type nativeSenderChain struct {
+	RatchetKey string `json:"ratchet_key"`
+	ChainKey   string `json:"chain_key"`
+	Index      int    `json:"index"`
 }
 
 type nativeMessagePayload struct {
@@ -168,6 +186,9 @@ func (s *nativeState) ensureMaps() {
 	if s.AppState.Keys == nil {
 		s.AppState.Keys = map[string]nativeAppStateKey{}
 	}
+	if s.AppState.Collections == nil {
+		s.AppState.Collections = map[string]nativeAppStateCollection{}
+	}
 }
 
 func buildNativeOneTimePreKeys(count int) []nativeSignalPreKey {
@@ -183,6 +204,7 @@ func buildNativeOneTimePreKeys(count int) []nativeSignalPreKey {
 }
 
 func marshalNativeState(state nativeState) ([]byte, error) {
+	state.Profile = normalizeNativePhoneProfile(state.Profile, "")
 	return json.MarshalIndent(state, "", "  ")
 }
 
@@ -191,11 +213,19 @@ func unmarshalNativeState(data []byte) (nativeState, error) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return nativeState{}, err
 	}
+	var disk struct {
+		UserAgent string `json:"user_agent"`
+		Profile   struct {
+			UserAgent string `json:"user_agent"`
+		} `json:"profile"`
+	}
+	_ = json.Unmarshal(data, &disk)
+	state.Profile = normalizeNativePhoneProfile(state.Profile, firstNonEmpty(disk.Profile.UserAgent, disk.UserAgent))
 	state.ensureMaps()
 	return state, nil
 }
 
-func newNativeState(phone *waappv1.PhoneTarget, appVersion string) (nativeState, error) {
+func newNativeState(phone *waappv1.PhoneTarget) (nativeState, error) {
 	chatStatic, err := newNativeCurveKeyPair()
 	if err != nil {
 		return nativeState{}, err
@@ -244,7 +274,6 @@ func newNativeState(phone *waappv1.PhoneTarget, appVersion string) (nativeState,
 		CC:            phoneCC(phone),
 		Phone:         phoneNational(phone),
 		AuthKey:       chatStatic.Public,
-		UserAgent:     firstNonEmpty(profile.UserAgent, nativeUserAgent(appVersion)),
 		Profile:       profile,
 		ChatStatic:    chatStatic,
 		Signal: nativeSignalState{
@@ -319,6 +348,7 @@ func buildNativePhoneProfile(phone *waappv1.PhoneTarget) nativePhoneProfile {
 	ram := model.MinRAMGiB + rng.Float64()*(model.MaxRAMGiB-model.MinRAMGiB)
 	additionalFields := map[string]string{
 		"network_radio_type":    "1",
+		"pid":                   fmt.Sprintf("%d", 10000+rng.Intn(50000)),
 		"simnum":                simnum,
 		"hasinrc":               "1",
 		"rc":                    "0",
@@ -341,7 +371,9 @@ func buildNativePhoneProfile(phone *waappv1.PhoneTarget) nativePhoneProfile {
 		Schema:              "ctf-whatsapp-phone-profile/v1",
 		CreatedAtUnix:       time.Now().UTC().Unix(),
 		PhoneSHA256:         hex.EncodeToString(phoneHash[:]),
-		UserAgent:           fmt.Sprintf("WhatsApp/%s Android/%s Device/%s-%s", defaultWAAppVersion, model.Android, model.Vendor, model.Model),
+		DeviceVendor:        model.Vendor,
+		DeviceModel:         model.Model,
+		AndroidVersion:      model.Android,
 		FDID:                newUUIDString(),
 		ExpID:               expID,
 		ExpIDUUID:           expIDUUID,
@@ -449,7 +481,20 @@ func renderNativePlain(params map[string]string, rawKeys map[string]struct{}) st
 }
 
 func stableParamOrder(params map[string]string) []string {
-	preferred := []string{"cc", "in", "method", "lg", "lc", "fdid", "expid", "access_session_id", "id", "backup_token", "code", "auth_response", "context", "advertising_id", "login", "type", "token", "authkey", "e_ident", "e_keytype", "e_regid", "e_skey_id", "e_skey_val", "e_skey_sig"}
+	preferred := []string{
+		"cc", "in", "method", "lg", "lc", "fdid", "expid", "access_session_id",
+		"id", "backup_token", "code", "auth_response", "context", "advertising_id",
+		"login", "type", "token", "authkey", "e_ident", "e_keytype", "e_regid",
+		"e_skey_id", "e_skey_val", "e_skey_sig",
+		"mistyped", "reason", "hasav", "offline_ab", "client_metrics", "entered",
+		"read_phone_permission_granted", "sim_state", "network_operator_name",
+		"sim_operator_name", "device_name", "backup_token_error", "mcc", "mnc",
+		"sim_mcc", "sim_mnc", "education_screen_displayed", "prefer_sms_over_flash",
+		"network_radio_type", "simnum", "hasinrc", "pid", "rc", "device_ram", "gpia",
+		"db", "recaptcha", "_ge", "_gi", "_gg", "_gp", "_ga", "aid",
+		"feo2_query_status", "is_foa_fdid_app_installed", "language_selector_time_spent",
+		"language_selector_clicked_count",
+	}
 	seen := map[string]struct{}{}
 	out := []string{}
 	for _, key := range preferred {
@@ -470,10 +515,52 @@ func stableParamOrder(params map[string]string) []string {
 }
 
 func nativeUserAgent(appVersion string) string {
+	return nativeUserAgentForProfile(nativePhoneProfile{}, appVersion)
+}
+
+func nativeUserAgentForState(state nativeState, appVersion string) string {
+	return nativeUserAgentForProfile(state.Profile, appVersion)
+}
+
+func nativeUserAgentForProfile(profile nativePhoneProfile, appVersion string) string {
+	return "WhatsApp/" + nativeAppVersion(appVersion) + " " + nativeDeviceUserAgent(profile)
+}
+
+func nativeDeviceUserAgent(profile nativePhoneProfile) string {
+	profile = normalizeNativePhoneProfile(profile, "")
+	return "Android/" + profile.AndroidVersion + " Device/" + profile.DeviceVendor + "-" + profile.DeviceModel
+}
+
+func nativeAppVersion(appVersion string) string {
 	if strings.TrimSpace(appVersion) == "" {
-		appVersion = defaultWAAppVersion
+		return defaultWAAppVersion
 	}
-	return "WhatsApp/" + appVersion + " Android/7.0 Device/HUAWEI-TRT-AL00A"
+	return strings.TrimSpace(appVersion)
+}
+
+func normalizeNativePhoneProfile(profile nativePhoneProfile, userAgent string) nativePhoneProfile {
+	if device, ok := nativeDeviceModelFromUserAgent(userAgent); ok {
+		profile.DeviceVendor = firstNonEmpty(profile.DeviceVendor, device.Vendor)
+		profile.DeviceModel = firstNonEmpty(profile.DeviceModel, device.Model)
+		profile.AndroidVersion = firstNonEmpty(profile.AndroidVersion, device.Android)
+	}
+	device := defaultNativeDeviceModel()
+	profile.DeviceVendor = firstNonEmpty(profile.DeviceVendor, device.Vendor)
+	profile.DeviceModel = firstNonEmpty(profile.DeviceModel, device.Model)
+	profile.AndroidVersion = firstNonEmpty(profile.AndroidVersion, device.Android)
+	return profile
+}
+
+func nativeDeviceModelFromUserAgent(userAgent string) (nativeDeviceModel, bool) {
+	match := nativeUserAgentDevicePattern.FindStringSubmatch(strings.TrimSpace(userAgent))
+	if len(match) != 4 {
+		return nativeDeviceModel{}, false
+	}
+	return nativeDeviceModel{Android: match[1], Vendor: match[2], Model: match[3]}, true
+}
+
+func defaultNativeDeviceModel() nativeDeviceModel {
+	return nativeDeviceModels[0]
 }
 
 func parseJSONMap(text string) map[string]any {

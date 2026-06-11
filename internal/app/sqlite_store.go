@@ -427,7 +427,7 @@ func (s *SQLiteStore) ListPendingEncryptedInboundMessages(ctx context.Context, w
 	return sqliteListPayloads(ctx, s.db, func() *waappv1.InboundMessage { return &waappv1.InboundMessage{} }, `SELECT m.payload FROM wa_sqlite_inbound_messages m
 JOIN wa_sqlite_message_sessions s ON s.id=m.message_session_id
 LEFT JOIN wa_sqlite_decrypted_messages d ON d.message_id=m.id
-WHERE s.wa_account_id=? AND s.client_profile_id=? AND m.encryption_state=? AND COALESCE(json_extract(m.payload, '$.delete_status'), 'MESSAGE_DELETE_STATUS_NOT_DELETED')<>'MESSAGE_DELETE_STATUS_DELETED_FOR_ME' AND d.id IS NULL
+WHERE s.wa_account_id=? AND s.client_profile_id=? AND m.encryption_state=? AND COALESCE(json_extract(m.payload, '$.direction'), 'ACCOUNT_MESSAGE_DIRECTION_INBOUND')='ACCOUNT_MESSAGE_DIRECTION_INBOUND' AND COALESCE(json_extract(m.payload, '$.delete_status'), 'MESSAGE_DELETE_STATUS_NOT_DELETED')<>'MESSAGE_DELETE_STATUS_DELETED_FOR_ME' AND d.id IS NULL
 ORDER BY m.received_at ASC, m.id ASC LIMIT ?`, waAccountIDValue, clientProfileID, waappv1.MessageEncryptionState_MESSAGE_ENCRYPTION_STATE_ENCRYPTED.String(), limit)
 }
 

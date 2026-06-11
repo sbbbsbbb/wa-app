@@ -322,7 +322,7 @@ func fallbackTokenDictionary() *tokenDictionary {
 			161: "critical_block",
 			248: "regular",
 		}),
-		tokenDictionaryBucket(map[int]string{30: "keys"}),
+		tokenDictionaryBucket(map[int]string{30: "keys", 184: "533"}),
 	}
 	for bucket, values := range secondary {
 		for idx, value := range values {

@@ -17,6 +17,7 @@ func (s *Server) saveWAAccount(ctx context.Context, account *waappv1.WAAccount) 
 		return nil, err
 	}
 	account.WaAccountId = accountID
+	account.DisplayName = strings.TrimSpace(account.GetDisplayName())
 	account.Phone = normalizePhone(account.GetPhone())
 	account.Status = normalizeWAAccountStatus(account.GetStatus())
 	if err := s.store.SaveWAAccount(ctx, account); err != nil {

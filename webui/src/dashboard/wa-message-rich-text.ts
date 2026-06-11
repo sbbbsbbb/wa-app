@@ -18,12 +18,20 @@ const TEXT_KEYS = [
 const URL_KEYS = ['url', 'merchant_url', 'consented_users_url', 'fallback_url', 'web_url', 'deeplink_url'];
 
 export function normalizeWaMessageText(text: string) {
-  const value = text.trim();
-  if (!value.startsWith('{') || !value.endsWith('}')) return text;
+  const value = normalizeFramedWaText(text);
+  if (!value.startsWith('{') || !value.endsWith('}')) return value;
   const parsed = parseJSONObject(value);
-  if (!parsed) return text;
+  if (!parsed) return value;
   const parts = richTextParts(parsed, 0);
-  return parts.length > 0 ? unique(parts).join('\n') : text;
+  return parts.length > 0 ? unique(parts).join('\n') : value;
+}
+
+function normalizeFramedWaText(text: string) {
+  let value = text.trim();
+  if (/^2[\x20-\x7e](?=[*\d])/.test(value)) value = value.slice(2).trim();
+  if (!/verification code/i.test(value)) return value;
+  value = value.replace(/([.!?])[:;]$/, '$1');
+  return value.replace(/([.!?])[A-Z]{1,3}$/, '$1');
 }
 
 function richTextParts(value: unknown, depth: number): string[] {
@@ -46,7 +54,7 @@ function parseJSONObject(value: string) {
 
 function textValue(value: unknown) {
   if (typeof value !== 'string') return '';
-  const text = value.trim();
+  const text = normalizeFramedWaText(value);
   if (!text || text.includes('\0') || isMachineToken(text) || isURL(text)) return '';
   return text;
 }

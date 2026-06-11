@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package byte.v.forge.waapp.v1;
 
+import "byte/v/forge/waapp/v1/account_settings.proto";
 import "byte/v/forge/waapp/v1/common.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -49,9 +50,11 @@ enum KeyMaterialStatus {
 
 message WAAccount {
   string wa_account_id = 1;
+  string display_name = 2;
   PhoneTarget phone = 3;
   WAAccountStatus status = 4;
   AuditStamp audit = 5;
+  TwoFactorAuthStatus two_factor_auth = 6;
 }
 
 message ClientProfile {
@@ -68,9 +71,9 @@ message ClientProfile {
 }
 
 message DeviceFingerprint {
+  reserved 2, 3;
+
   string fingerprint_id = 1;
-  string user_agent = 2;
-  string app_version = 3;
   string device_vendor = 4;
   string device_model = 5;
   string android_version = 6;

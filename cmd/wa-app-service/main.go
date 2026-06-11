@@ -18,18 +18,26 @@ import (
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
 )
 
+const (
+	defaultGRPCListenAddr     = ":50091"
+	defaultDashboardHTTPAddr  = ":8080"
+	defaultDashboardStaticDir = "/app/dashboard/wa"
+	defaultWAAppDataDirectory = "/var/lib/wa-app"
+)
+
 func main() {
 	cfg := config.Load()
+	dataDir := configValue(cfg.DataDir, defaultWAAppDataDirectory)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	store, err := newDurableStore(ctx, cfg)
+	store, err := newDurableStore(ctx, cfg, dataDir)
 	if err != nil {
 		log.Fatalf("initialize wa-app durable store: %v", err)
 	}
 	defer store.Close()
 
-	runtime, err := newRuntimeState(ctx, cfg)
+	runtime, err := newRuntimeState(ctx, cfg, dataDir)
 	if err != nil {
 		log.Fatalf("initialize wa-app runtime state: %v", err)
 	}
@@ -48,9 +56,14 @@ func main() {
 		}
 	}
 	service := app.NewServer(store, runtime, engine, clock, ids)
-	listener, err := net.Listen("tcp", cfg.ListenAddr)
+	service.SetStaticProxyURLs(cfg.CommonProxy, cfg.NumberProbeProxy, cfg.RegistrationProxy)
+	authConfig := newDashboardAuthConfig(cfg.DashboardAuthPass)
+	grpcListenAddr := configValue(cfg.GRPCListenAddr, defaultGRPCListenAddr)
+	dashboardHTTPAddr := configValue(cfg.DashboardHTTPAddr, defaultDashboardHTTPAddr)
+	dashboardStaticDir := configValue(cfg.DashboardStaticDir, defaultDashboardStaticDir)
+	listener, err := net.Listen("tcp", grpcListenAddr)
 	if err != nil {
-		log.Fatalf("listen %s: %v", cfg.ListenAddr, err)
+		log.Fatalf("listen %s: %v", grpcListenAddr, err)
 	}
 	server := grpc.NewServer()
 	waappv1.RegisterWaDiscoveryServiceServer(server, service)
@@ -67,7 +80,7 @@ func main() {
 
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.Go(func() error {
-		log.Printf("wa-app-service listening on %s", cfg.ListenAddr)
+		log.Printf("wa-app-service listening on %s", grpcListenAddr)
 		if err := server.Serve(listener); err != nil && groupCtx.Err() == nil {
 			return err
 		}
@@ -79,7 +92,7 @@ func main() {
 		return nil
 	})
 	group.Go(func() error {
-		return runDashboardHTTP(groupCtx, cfg.DashboardHTTPAddr, cfg.DashboardStaticDir, service, newWAActionHandler(service))
+		return runDashboardHTTP(groupCtx, dashboardHTTPAddr, dashboardStaticDir, service, newWAActionHandler(service), authConfig)
 	})
 	group.Go(func() error {
 		return service.RunLongConnections(groupCtx)
@@ -90,18 +103,25 @@ func main() {
 	}
 }
 
-func newDurableStore(ctx context.Context, cfg config.Config) (app.Store, error) {
+func configValue(value string, fallback string) string {
+	if trimmed := strings.TrimSpace(value); trimmed != "" {
+		return trimmed
+	}
+	return fallback
+}
+
+func newDurableStore(ctx context.Context, cfg config.Config, dataDir string) (app.Store, error) {
 	if strings.TrimSpace(cfg.PGDSN) != "" {
 		return app.NewPostgresStore(ctx, cfg.PGDSN)
 	}
-	log.Printf("WA_APP_PG_DSN is not configured; wa-app uses sqlite durable store in %s", cfg.DataDir)
-	return app.NewSQLiteStore(ctx, cfg.DataDir)
+	log.Printf("WA_APP_PG_DSN is not configured; wa-app uses sqlite durable store in %s", dataDir)
+	return app.NewSQLiteStore(ctx, dataDir)
 }
 
-func newRuntimeState(ctx context.Context, cfg config.Config) (app.RuntimeState, error) {
+func newRuntimeState(ctx context.Context, cfg config.Config, dataDir string) (app.RuntimeState, error) {
 	if strings.TrimSpace(cfg.RedisURL) != "" {
 		return app.NewRedisRuntime(ctx, cfg.RedisURL)
 	}
-	log.Printf("WA_APP_REDIS_URL is not configured; wa-app uses sqlite runtime state in %s", cfg.DataDir)
-	return app.NewSQLiteRuntime(ctx, cfg.DataDir)
+	log.Printf("WA_APP_REDIS_URL is not configured; wa-app uses sqlite runtime state in %s", dataDir)
+	return app.NewSQLiteRuntime(ctx, dataDir)
 }

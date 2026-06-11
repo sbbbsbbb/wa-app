@@ -15,6 +15,8 @@ type accountMessageParts struct {
 	kind            waappv1.InboundMessageKind
 	encryptionState waappv1.MessageEncryptionState
 	ackStatus       waappv1.MessageAckStatus
+	direction       waappv1.AccountMessageDirection
+	source          waappv1.AccountMessageSource
 	contactRef      string
 	senderRef       string
 	payloadRef      string
@@ -44,8 +46,8 @@ func newAccountMessage(parts accountMessageParts, includeSensitiveText bool) *wa
 		MessageSessionId: parts.sessionID,
 		ContactRef:       contactRefForMessage(parts.contactRef, parts.senderRef),
 		SenderRef:        parts.senderRef,
-		Direction:        accountMessageDirection(parts.kind),
-		Source:           waappv1.AccountMessageSource_ACCOUNT_MESSAGE_SOURCE_LONG_CONNECTION,
+		Direction:        accountMessageDirection(parts.direction, parts.kind),
+		Source:           accountMessageSource(parts.source),
 		Kind:             parts.kind,
 		EncryptionState:  parts.encryptionState,
 		AckStatus:        parts.ackStatus,
@@ -70,6 +72,8 @@ func newAccountMessageFromInbound(accountID string, msg *waappv1.InboundMessage,
 		kind:            msg.GetKind(),
 		encryptionState: msg.GetEncryptionState(),
 		ackStatus:       msg.GetAckStatus(),
+		direction:       msg.GetDirection(),
+		source:          msg.GetSource(),
 		contactRef:      msg.GetContactRef(),
 		senderRef:       msg.GetSenderRef(),
 		payloadRef:      msg.GetPayloadRef(),
@@ -106,15 +110,25 @@ func contactRefForMessage(contactRef string, sender string) string {
 	return value
 }
 
-func accountMessageDirection(kind waappv1.InboundMessageKind) waappv1.AccountMessageDirection {
+func accountMessageDirection(direction waappv1.AccountMessageDirection, kind waappv1.InboundMessageKind) waappv1.AccountMessageDirection {
+	if direction != waappv1.AccountMessageDirection_ACCOUNT_MESSAGE_DIRECTION_UNSPECIFIED {
+		return direction
+	}
 	if kind == waappv1.InboundMessageKind_INBOUND_MESSAGE_KIND_SYSTEM {
 		return waappv1.AccountMessageDirection_ACCOUNT_MESSAGE_DIRECTION_SYSTEM
 	}
 	return waappv1.AccountMessageDirection_ACCOUNT_MESSAGE_DIRECTION_INBOUND
 }
 
+func accountMessageSource(source waappv1.AccountMessageSource) waappv1.AccountMessageSource {
+	if source != waappv1.AccountMessageSource_ACCOUNT_MESSAGE_SOURCE_UNSPECIFIED {
+		return source
+	}
+	return waappv1.AccountMessageSource_ACCOUNT_MESSAGE_SOURCE_LONG_CONNECTION
+}
+
 func accountMessageDisplayText(text string) string {
-	text = strings.TrimSpace(text)
+	text = normalizeWAFramedDisplayText(strings.TrimSpace(text))
 	if text == "" {
 		return ""
 	}

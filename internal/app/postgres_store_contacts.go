@@ -15,6 +15,7 @@ func (s *PostgresStore) SaveWAContacts(ctx context.Context, contacts []*waappv1.
 	batch := &pgx.Batch{}
 	queued := 0
 	for _, contact := range contacts {
+		contact = normalizedWAContactForStorage(contact)
 		if contact == nil || contact.GetContactId() == "" || contact.GetWaAccountId() == "" {
 			continue
 		}
@@ -28,6 +29,7 @@ ON CONFLICT (contact_id) DO UPDATE SET
   display_name=CASE
     WHEN NULLIF(EXCLUDED.display_name,'') IS NULL THEN wa_contacts.display_name
     WHEN wa_contacts.display_name='' OR wa_contacts.display_name='未知联系人' OR wa_contacts.display_name LIKE '联系人 %' OR wa_contacts.display_name LIKE 'LID %' THEN EXCLUDED.display_name
+    WHEN wa_contacts.display_name='0' OR wa_contacts.display_name ~ '^\+?[0-9]{6,}$' THEN EXCLUDED.display_name
     WHEN COALESCE(NULLIF(wa_contacts.number,''), NULLIF(EXCLUDED.number,''), '') <> '' AND wa_contacts.display_name='+' || COALESCE(NULLIF(wa_contacts.number,''), NULLIF(EXCLUDED.number,''), '') THEN EXCLUDED.display_name
     ELSE wa_contacts.display_name
   END,
@@ -158,7 +160,7 @@ const contactSelectSQL = `SELECT c.contact_id,c.wa_account_id,c.jid,c.number,c.d
 FROM wa_contacts c
 LEFT JOIN LATERAL (
   SELECT COUNT(*) AS message_count,
-         COUNT(*) FILTER (WHERE m.read_at IS NULL) AS unread_count,
+         COUNT(*) FILTER (WHERE m.read_at IS NULL AND m.direction='ACCOUNT_MESSAGE_DIRECTION_INBOUND') AS unread_count,
          MAX(m.received_at) AS last_message_at
   FROM wa_inbound_messages m
   JOIN wa_message_sessions ms ON ms.message_session_id=m.message_session_id

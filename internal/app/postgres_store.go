@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,6 +14,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+//go:embed migrations/001_init.sql
+var postgresStoreSchema string
 
 type PostgresStore struct{ pool *pgxpool.Pool }
 
@@ -33,11 +37,39 @@ func NewPostgresStore(ctx context.Context, dsn string) (*PostgresStore, error) {
 		return nil, err
 	}
 	store := &PostgresStore{pool: pool}
+	if err := runPostgresMigrations(ctx, cfg); err != nil {
+		pool.Close()
+		return nil, err
+	}
 	if err := store.validate(ctx); err != nil {
 		pool.Close()
 		return nil, err
 	}
 	return store, nil
+}
+
+func runPostgresMigrations(ctx context.Context, cfg *pgxpool.Config) error {
+	if strings.TrimSpace(postgresStoreSchema) == "" {
+		return nil
+	}
+	connConfig := cfg.ConnConfig.Copy()
+	connConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+	conn, err := pgx.ConnectConfig(ctx, connConfig)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(ctx)
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err = tx.Exec(ctx, postgresStoreSchema); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *PostgresStore) Close() {
@@ -107,10 +139,10 @@ func (s *PostgresStore) SaveWAAccount(ctx context.Context, account *waappv1.WAAc
 	if updatedAt.IsZero() {
 		updatedAt = createdAt
 	}
-	_, err := s.pool.Exec(ctx, `INSERT INTO wa_accounts (wa_account_id, e164_number, country_calling_code, national_number, country_iso2, status, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-ON CONFLICT (e164_number) DO UPDATE SET country_calling_code=EXCLUDED.country_calling_code, national_number=EXCLUDED.national_number, country_iso2=EXCLUDED.country_iso2, status=EXCLUDED.status, updated_at=EXCLUDED.updated_at`,
-		waAccountID(account), account.GetPhone().GetE164Number(), account.GetPhone().GetCountryCallingCode(), account.GetPhone().GetNationalNumber(), account.GetPhone().GetCountryIso2(), waAccountStatusStorageValue(account), createdAt, updatedAt)
+	_, err := s.pool.Exec(ctx, `INSERT INTO wa_accounts (wa_account_id, display_name, e164_number, country_calling_code, national_number, country_iso2, status, two_factor_auth_configured, two_factor_email_configured, two_factor_email_address, two_factor_email_verified, two_factor_email_confirmed, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+ON CONFLICT (e164_number) DO UPDATE SET display_name=COALESCE(NULLIF(EXCLUDED.display_name,''), wa_accounts.display_name), country_calling_code=EXCLUDED.country_calling_code, national_number=EXCLUDED.national_number, country_iso2=EXCLUDED.country_iso2, status=EXCLUDED.status, two_factor_auth_configured=COALESCE(EXCLUDED.two_factor_auth_configured, wa_accounts.two_factor_auth_configured), two_factor_email_configured=COALESCE(EXCLUDED.two_factor_email_configured, wa_accounts.two_factor_email_configured), two_factor_email_address=COALESCE(EXCLUDED.two_factor_email_address, wa_accounts.two_factor_email_address), two_factor_email_verified=COALESCE(EXCLUDED.two_factor_email_verified, wa_accounts.two_factor_email_verified), two_factor_email_confirmed=COALESCE(EXCLUDED.two_factor_email_confirmed, wa_accounts.two_factor_email_confirmed), updated_at=EXCLUDED.updated_at`,
+		waAccountID(account), account.GetDisplayName(), account.GetPhone().GetE164Number(), account.GetPhone().GetCountryCallingCode(), account.GetPhone().GetNationalNumber(), account.GetPhone().GetCountryIso2(), waAccountStatusStorageValue(account), nullableTwoFactorConfigured(account.GetTwoFactorAuth()), nullableTwoFactorEmailConfigured(account.GetTwoFactorAuth()), nullableTwoFactorEmailAddress(account.GetTwoFactorAuth()), nullableTwoFactorEmailVerified(account.GetTwoFactorAuth()), nullableTwoFactorEmailConfirmed(account.GetTwoFactorAuth()), createdAt, updatedAt)
 	return err
 }
 
@@ -136,7 +168,7 @@ func (s *PostgresStore) ListWAAccounts(ctx context.Context, cursorValue string, 
 	accounts := []*waappv1.WAAccount{}
 	for rows.Next() {
 		var r waAccountRow
-		if err := rows.Scan(&r.id, &r.e164, &r.cc, &r.national, &r.iso2, &r.status, &r.createdAt, &r.updatedAt); err != nil {
+		if err := rows.Scan(&r.id, &r.displayName, &r.e164, &r.cc, &r.national, &r.iso2, &r.status, &r.twoFactorConfigured, &r.twoFactorEmailConfigured, &r.twoFactorEmailAddress, &r.twoFactorEmailVerified, &r.twoFactorEmailConfirmed, &r.createdAt, &r.updatedAt); err != nil {
 			return nil, "", err
 		}
 		accounts = append(accounts, r.toProto())
@@ -151,7 +183,7 @@ func (s *PostgresStore) ListWAAccounts(ctx context.Context, cursorValue string, 
 }
 
 func (s *PostgresStore) queryWAAccountPage(ctx context.Context, cursor keysetCursor, limit int) (pgx.Rows, error) {
-	const base = `SELECT wa_account_id,e164_number,country_calling_code,national_number,country_iso2,status,created_at,updated_at FROM wa_accounts`
+	const base = `SELECT wa_account_id,display_name,e164_number,country_calling_code,national_number,country_iso2,status,two_factor_auth_configured,two_factor_email_configured,two_factor_email_address,two_factor_email_verified,two_factor_email_confirmed,created_at,updated_at FROM wa_accounts`
 	if !hasKeysetCursor(cursor) {
 		return s.pool.Query(ctx, base+` ORDER BY updated_at DESC, wa_account_id DESC LIMIT $1`, limit)
 	}
@@ -159,9 +191,9 @@ func (s *PostgresStore) queryWAAccountPage(ctx context.Context, cursor keysetCur
 }
 
 func (s *PostgresStore) getWAAccount(ctx context.Context, where string, args ...any) (*waappv1.WAAccount, error) {
-	row := s.pool.QueryRow(ctx, `SELECT wa_account_id,e164_number,country_calling_code,national_number,country_iso2,status,created_at,updated_at FROM wa_accounts WHERE `+where, args...)
+	row := s.pool.QueryRow(ctx, `SELECT wa_account_id,display_name,e164_number,country_calling_code,national_number,country_iso2,status,two_factor_auth_configured,two_factor_email_configured,two_factor_email_address,two_factor_email_verified,two_factor_email_confirmed,created_at,updated_at FROM wa_accounts WHERE `+where, args...)
 	var r waAccountRow
-	if err := row.Scan(&r.id, &r.e164, &r.cc, &r.national, &r.iso2, &r.status, &r.createdAt, &r.updatedAt); err != nil {
+	if err := row.Scan(&r.id, &r.displayName, &r.e164, &r.cc, &r.national, &r.iso2, &r.status, &r.twoFactorConfigured, &r.twoFactorEmailConfigured, &r.twoFactorEmailAddress, &r.twoFactorEmailVerified, &r.twoFactorEmailConfirmed, &r.createdAt, &r.updatedAt); err != nil {
 		return nil, notFound(err, waappv1.WaErrorCode_WA_ERROR_CODE_WA_ACCOUNT_NOT_FOUND, "WA account not found")
 	}
 	return r.toProto(), nil
@@ -252,17 +284,17 @@ ON CONFLICT (account_probe_id) DO UPDATE SET status=EXCLUDED.status, supported_m
 
 func (s *PostgresStore) SaveVerificationRequest(ctx context.Context, record *waappv1.VerificationCodeRequestRecord) error {
 	appErr := errorFromProto(record.GetLastError())
-	_, err := s.pool.Exec(ctx, `INSERT INTO wa_verification_requests (verification_request_id, wa_account_id, client_profile_id, delivery_method, status, expected_code_length, last_error_code, last_error_message, last_error_retryable, requested_at, expires_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-ON CONFLICT (verification_request_id) DO UPDATE SET status=EXCLUDED.status, expected_code_length=EXCLUDED.expected_code_length, last_error_code=EXCLUDED.last_error_code, last_error_message=EXCLUDED.last_error_message, last_error_retryable=EXCLUDED.last_error_retryable, expires_at=EXCLUDED.expires_at`,
-		record.GetVerificationRequestId(), record.GetWaAccountId(), record.GetClientProfileId(), record.GetDeliveryMethod().String(), record.GetStatus().String(), record.GetExpectedCodeLength(), errCode(appErr), errMessage(appErr), errRetryable(appErr), timeFromProto(record.GetRequestedAt()), nullableProtoTime(record.GetExpiresAt()))
+	_, err := s.pool.Exec(ctx, `INSERT INTO wa_verification_requests (verification_request_id, wa_account_id, client_profile_id, delivery_method, status, expected_code_length, retry_after_seconds, last_error_code, last_error_message, last_error_retryable, requested_at, expires_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+ON CONFLICT (verification_request_id) DO UPDATE SET status=EXCLUDED.status, expected_code_length=EXCLUDED.expected_code_length, retry_after_seconds=EXCLUDED.retry_after_seconds, last_error_code=EXCLUDED.last_error_code, last_error_message=EXCLUDED.last_error_message, last_error_retryable=EXCLUDED.last_error_retryable, expires_at=EXCLUDED.expires_at`,
+		record.GetVerificationRequestId(), record.GetWaAccountId(), record.GetClientProfileId(), record.GetDeliveryMethod().String(), record.GetStatus().String(), record.GetExpectedCodeLength(), durationSeconds(record.GetRetryAfter()), errCode(appErr), errMessage(appErr), errRetryable(appErr), timeFromProto(record.GetRequestedAt()), nullableProtoTime(record.GetExpiresAt()))
 	return err
 }
 
 func (s *PostgresStore) GetVerificationRequest(ctx context.Context, id string) (*waappv1.VerificationCodeRequestRecord, error) {
-	row := s.pool.QueryRow(ctx, `SELECT verification_request_id,wa_account_id,client_profile_id,delivery_method,status,expected_code_length,last_error_code,last_error_message,last_error_retryable,requested_at,expires_at FROM wa_verification_requests WHERE verification_request_id=$1`, id)
+	row := s.pool.QueryRow(ctx, `SELECT verification_request_id,wa_account_id,client_profile_id,delivery_method,status,expected_code_length,retry_after_seconds,last_error_code,last_error_message,last_error_retryable,requested_at,expires_at FROM wa_verification_requests WHERE verification_request_id=$1`, id)
 	var r verificationRow
-	if err := row.Scan(&r.id, &r.waAccountIDValue, &r.clientProfileID, &r.method, &r.status, &r.length, &r.errCode, &r.errMessage, &r.errRetryable, &r.requestedAt, &r.expiresAt); err != nil {
+	if err := row.Scan(&r.id, &r.waAccountIDValue, &r.clientProfileID, &r.method, &r.status, &r.length, &r.retryAfterSeconds, &r.errCode, &r.errMessage, &r.errRetryable, &r.requestedAt, &r.expiresAt); err != nil {
 		return nil, notFound(err, waappv1.WaErrorCode_WA_ERROR_CODE_REGISTRATION_NOT_FOUND, "verification request not found")
 	}
 	return r.toProto(), nil
@@ -385,12 +417,26 @@ func (s *PostgresStore) SaveInboundMessages(ctx context.Context, messages []*waa
 	batch := &pgx.Batch{}
 	for _, msg := range messages {
 		appErr := errorFromProto(msg.GetLastError())
-		batch.Queue(`INSERT INTO wa_inbound_messages (message_id, message_session_id, kind, encryption_state, ack_status, contact_ref, sender_ref, payload_ref, provider_message_id, provider_timestamp, read_at, delete_status, deleted_at, last_error_code, last_error_message, last_error_retryable, received_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-ON CONFLICT (message_id) DO UPDATE SET encryption_state=EXCLUDED.encryption_state, ack_status=EXCLUDED.ack_status, contact_ref=EXCLUDED.contact_ref, sender_ref=EXCLUDED.sender_ref, payload_ref=EXCLUDED.payload_ref, provider_message_id=COALESCE(NULLIF(EXCLUDED.provider_message_id,''), wa_inbound_messages.provider_message_id), provider_timestamp=COALESCE(EXCLUDED.provider_timestamp, wa_inbound_messages.provider_timestamp), read_at=COALESCE(EXCLUDED.read_at, wa_inbound_messages.read_at), delete_status=CASE WHEN wa_inbound_messages.delete_status='MESSAGE_DELETE_STATUS_DELETED_FOR_ME' AND EXCLUDED.delete_status='MESSAGE_DELETE_STATUS_NOT_DELETED' THEN wa_inbound_messages.delete_status ELSE EXCLUDED.delete_status END, deleted_at=COALESCE(EXCLUDED.deleted_at, wa_inbound_messages.deleted_at), last_error_code=EXCLUDED.last_error_code, last_error_message=EXCLUDED.last_error_message, last_error_retryable=EXCLUDED.last_error_retryable`,
-			msg.GetMessageId(), msg.GetMessageSessionId(), msg.GetKind().String(), msg.GetEncryptionState().String(), msg.GetAckStatus().String(), msg.GetContactRef(), msg.GetSenderRef(), msg.GetPayloadRef(), msg.GetProviderMessageId(), nullableProtoTime(msg.GetProviderTimestamp()), nullableProtoTime(msg.GetReadAt()), inboundDeleteStatusStorageValue(msg), nullableProtoTime(msg.GetDeletedAt()), errCode(appErr), errMessage(appErr), errRetryable(appErr), timeFromProto(msg.GetReceivedAt()))
+		batch.Queue(`INSERT INTO wa_inbound_messages (message_id, message_session_id, kind, encryption_state, ack_status, direction, source, contact_ref, sender_ref, payload_ref, provider_message_id, provider_timestamp, read_at, delete_status, deleted_at, last_error_code, last_error_message, last_error_retryable, received_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+ON CONFLICT (message_id) DO UPDATE SET encryption_state=EXCLUDED.encryption_state, ack_status=EXCLUDED.ack_status, direction=EXCLUDED.direction, source=EXCLUDED.source, contact_ref=EXCLUDED.contact_ref, sender_ref=EXCLUDED.sender_ref, payload_ref=EXCLUDED.payload_ref, provider_message_id=COALESCE(NULLIF(EXCLUDED.provider_message_id,''), wa_inbound_messages.provider_message_id), provider_timestamp=COALESCE(EXCLUDED.provider_timestamp, wa_inbound_messages.provider_timestamp), read_at=COALESCE(EXCLUDED.read_at, wa_inbound_messages.read_at), delete_status=CASE WHEN wa_inbound_messages.delete_status='MESSAGE_DELETE_STATUS_DELETED_FOR_ME' AND EXCLUDED.delete_status='MESSAGE_DELETE_STATUS_NOT_DELETED' THEN wa_inbound_messages.delete_status ELSE EXCLUDED.delete_status END, deleted_at=COALESCE(EXCLUDED.deleted_at, wa_inbound_messages.deleted_at), last_error_code=EXCLUDED.last_error_code, last_error_message=EXCLUDED.last_error_message, last_error_retryable=EXCLUDED.last_error_retryable`,
+			msg.GetMessageId(), msg.GetMessageSessionId(), msg.GetKind().String(), msg.GetEncryptionState().String(), msg.GetAckStatus().String(), inboundMessageDirectionStorageValue(msg), inboundMessageSourceStorageValue(msg), msg.GetContactRef(), msg.GetSenderRef(), msg.GetPayloadRef(), msg.GetProviderMessageId(), nullableProtoTime(msg.GetProviderTimestamp()), nullableProtoTime(msg.GetReadAt()), inboundDeleteStatusStorageValue(msg), nullableProtoTime(msg.GetDeletedAt()), errCode(appErr), errMessage(appErr), errRetryable(appErr), timeFromProto(msg.GetReceivedAt()))
 	}
 	return s.pool.SendBatch(ctx, batch).Close()
+}
+
+func inboundMessageDirectionStorageValue(msg *waappv1.InboundMessage) string {
+	if msg.GetDirection() == waappv1.AccountMessageDirection_ACCOUNT_MESSAGE_DIRECTION_UNSPECIFIED {
+		return waappv1.AccountMessageDirection_ACCOUNT_MESSAGE_DIRECTION_INBOUND.String()
+	}
+	return msg.GetDirection().String()
+}
+
+func inboundMessageSourceStorageValue(msg *waappv1.InboundMessage) string {
+	if msg.GetSource() == waappv1.AccountMessageSource_ACCOUNT_MESSAGE_SOURCE_UNSPECIFIED {
+		return waappv1.AccountMessageSource_ACCOUNT_MESSAGE_SOURCE_LONG_CONNECTION.String()
+	}
+	return msg.GetSource().String()
 }
 
 func inboundDeleteStatusStorageValue(msg *waappv1.InboundMessage) string {
@@ -401,22 +447,22 @@ func inboundDeleteStatusStorageValue(msg *waappv1.InboundMessage) string {
 }
 
 func (s *PostgresStore) GetInboundMessage(ctx context.Context, id string) (*waappv1.InboundMessage, error) {
-	row := s.pool.QueryRow(ctx, `SELECT message_id,message_session_id,kind,encryption_state,ack_status,contact_ref,sender_ref,payload_ref,provider_message_id,provider_timestamp,read_at,delete_status,deleted_at,last_error_code,last_error_message,last_error_retryable,received_at FROM wa_inbound_messages WHERE message_id=$1`, id)
-	var r messageRow
-	if err := row.Scan(&r.id, &r.sessionID, &r.kind, &r.encryptionState, &r.ackStatus, &r.contactRef, &r.senderRef, &r.payloadRef, &r.providerMessageID, &r.providerTimestamp, &r.readAt, &r.deleteStatus, &r.deletedAt, &r.errCode, &r.errMessage, &r.errRetryable, &r.receivedAt); err != nil {
+	row := s.pool.QueryRow(ctx, `SELECT message_id,message_session_id,kind,encryption_state,ack_status,direction,source,contact_ref,sender_ref,payload_ref,provider_message_id,provider_timestamp,read_at,delete_status,deleted_at,last_error_code,last_error_message,last_error_retryable,received_at FROM wa_inbound_messages WHERE message_id=$1`, id)
+	msg, err := scanPostgresInboundMessage(row)
+	if err != nil {
 		return nil, notFound(err, waappv1.WaErrorCode_WA_ERROR_CODE_MESSAGE_NOT_FOUND, "message not found")
 	}
-	return r.toProto(), nil
+	return msg, nil
 }
 
 func (s *PostgresStore) ListPendingEncryptedInboundMessages(ctx context.Context, waAccountIDValue string, clientProfileID string, limit int) ([]*waappv1.InboundMessage, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
-	rows, err := s.pool.Query(ctx, `SELECT m.message_id,m.message_session_id,m.kind,m.encryption_state,m.ack_status,m.contact_ref,m.sender_ref,m.payload_ref,m.provider_message_id,m.provider_timestamp,m.read_at,m.delete_status,m.deleted_at,m.last_error_code,m.last_error_message,m.last_error_retryable,m.received_at
+	rows, err := s.pool.Query(ctx, `SELECT m.message_id,m.message_session_id,m.kind,m.encryption_state,m.ack_status,m.direction,m.source,m.contact_ref,m.sender_ref,m.payload_ref,m.provider_message_id,m.provider_timestamp,m.read_at,m.delete_status,m.deleted_at,m.last_error_code,m.last_error_message,m.last_error_retryable,m.received_at
 FROM wa_inbound_messages m
 JOIN wa_message_sessions s ON s.message_session_id=m.message_session_id
-WHERE s.wa_account_id=$1 AND s.client_profile_id=$2 AND m.encryption_state='MESSAGE_ENCRYPTION_STATE_ENCRYPTED' AND COALESCE(m.delete_status,'MESSAGE_DELETE_STATUS_NOT_DELETED')<>'MESSAGE_DELETE_STATUS_DELETED_FOR_ME' AND NOT EXISTS (
+WHERE s.wa_account_id=$1 AND s.client_profile_id=$2 AND m.encryption_state='MESSAGE_ENCRYPTION_STATE_ENCRYPTED' AND m.direction='ACCOUNT_MESSAGE_DIRECTION_INBOUND' AND COALESCE(m.delete_status,'MESSAGE_DELETE_STATUS_NOT_DELETED')<>'MESSAGE_DELETE_STATUS_DELETED_FOR_ME' AND NOT EXISTS (
   SELECT 1 FROM wa_decrypted_messages d WHERE d.message_id=m.message_id
 )
 ORDER BY m.received_at ASC, m.message_id ASC
@@ -428,7 +474,7 @@ LIMIT $3`, waAccountIDValue, clientProfileID, limit)
 	messages := []*waappv1.InboundMessage{}
 	for rows.Next() {
 		var r messageRow
-		if err := rows.Scan(&r.id, &r.sessionID, &r.kind, &r.encryptionState, &r.ackStatus, &r.contactRef, &r.senderRef, &r.payloadRef, &r.providerMessageID, &r.providerTimestamp, &r.readAt, &r.deleteStatus, &r.deletedAt, &r.errCode, &r.errMessage, &r.errRetryable, &r.receivedAt); err != nil {
+		if err := rows.Scan(&r.id, &r.sessionID, &r.kind, &r.encryptionState, &r.ackStatus, &r.direction, &r.source, &r.contactRef, &r.senderRef, &r.payloadRef, &r.providerMessageID, &r.providerTimestamp, &r.readAt, &r.deleteStatus, &r.deletedAt, &r.errCode, &r.errMessage, &r.errRetryable, &r.receivedAt); err != nil {
 			return nil, err
 		}
 		messages = append(messages, r.toProto())

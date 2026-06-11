@@ -2,6 +2,7 @@ package app
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 
 	waappv1 "github.com/byte-v-forge/wa-app/gen/go/byte/v/forge/waapp/v1"
@@ -110,23 +111,74 @@ func (r protocolProfileRow) toProto() *waappv1.ProtocolProfile {
 }
 
 type waAccountRow struct {
-	id        string
-	e164      string
-	cc        string
-	national  string
-	iso2      string
-	status    string
-	createdAt time.Time
-	updatedAt time.Time
+	id                       string
+	displayName              string
+	e164                     string
+	cc                       string
+	national                 string
+	iso2                     string
+	status                   string
+	twoFactorConfigured      sql.NullBool
+	twoFactorEmailConfigured sql.NullBool
+	twoFactorEmailAddress    sql.NullString
+	twoFactorEmailVerified   sql.NullBool
+	twoFactorEmailConfirmed  sql.NullBool
+	createdAt                time.Time
+	updatedAt                time.Time
 }
 
 func (r waAccountRow) toProto() *waappv1.WAAccount {
-	return newWAAccount(r.id, &waappv1.PhoneTarget{
+	account := newWAAccount(r.id, r.displayName, &waappv1.PhoneTarget{
 		E164Number:         r.e164,
 		CountryCallingCode: r.cc,
 		NationalNumber:     r.national,
 		CountryIso2:        r.iso2,
 	}, waappv1.WAAccountStatus(waappv1.WAAccountStatus_value[r.status]), audit(r.createdAt, r.updatedAt))
+	if r.twoFactorConfigured.Valid || r.twoFactorEmailConfigured.Valid || r.twoFactorEmailAddress.Valid || r.twoFactorEmailVerified.Valid || r.twoFactorEmailConfirmed.Valid {
+		account.TwoFactorAuth = &waappv1.TwoFactorAuthStatus{
+			Configured:      r.twoFactorConfigured.Bool,
+			EmailConfigured: r.twoFactorEmailConfigured.Bool,
+			EmailAddress:    r.twoFactorEmailAddress.String,
+			EmailVerified:   r.twoFactorEmailVerified.Bool,
+			EmailConfirmed:  r.twoFactorEmailConfirmed.Bool,
+		}
+	}
+	return account
+}
+
+func nullableTwoFactorConfigured(status *waappv1.TwoFactorAuthStatus) sql.NullBool {
+	if status == nil {
+		return sql.NullBool{}
+	}
+	return sql.NullBool{Bool: status.GetConfigured(), Valid: true}
+}
+
+func nullableTwoFactorEmailConfigured(status *waappv1.TwoFactorAuthStatus) sql.NullBool {
+	if status == nil {
+		return sql.NullBool{}
+	}
+	return sql.NullBool{Bool: status.GetEmailConfigured(), Valid: true}
+}
+
+func nullableTwoFactorEmailAddress(status *waappv1.TwoFactorAuthStatus) sql.NullString {
+	if status == nil || strings.TrimSpace(status.GetEmailAddress()) == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: strings.TrimSpace(status.GetEmailAddress()), Valid: true}
+}
+
+func nullableTwoFactorEmailVerified(status *waappv1.TwoFactorAuthStatus) sql.NullBool {
+	if status == nil {
+		return sql.NullBool{}
+	}
+	return sql.NullBool{Bool: status.GetEmailVerified(), Valid: true}
+}
+
+func nullableTwoFactorEmailConfirmed(status *waappv1.TwoFactorAuthStatus) sql.NullBool {
+	if status == nil {
+		return sql.NullBool{}
+	}
+	return sql.NullBool{Bool: status.GetEmailConfirmed(), Valid: true}
 }
 
 type clientProfileRow struct {
@@ -159,17 +211,18 @@ func (r clientProfileRow) toProto() *waappv1.ClientProfile {
 }
 
 type verificationRow struct {
-	id               string
-	waAccountIDValue string
-	clientProfileID  string
-	method           string
-	status           string
-	length           int32
-	errCode          string
-	errMessage       string
-	errRetryable     bool
-	requestedAt      time.Time
-	expiresAt        sql.NullTime
+	id                string
+	waAccountIDValue  string
+	clientProfileID   string
+	method            string
+	status            string
+	length            int32
+	retryAfterSeconds int64
+	errCode           string
+	errMessage        string
+	errRetryable      bool
+	requestedAt       time.Time
+	expiresAt         sql.NullTime
 }
 
 func (r verificationRow) toProto() *waappv1.VerificationCodeRequestRecord {
@@ -180,6 +233,7 @@ func (r verificationRow) toProto() *waappv1.VerificationCodeRequestRecord {
 		DeliveryMethod:        waappv1.VerificationDeliveryMethod(waappv1.VerificationDeliveryMethod_value[r.method]),
 		Status:                waappv1.VerificationRequestStatus(waappv1.VerificationRequestStatus_value[r.status]),
 		ExpectedCodeLength:    r.length,
+		RetryAfter:            durationFromSeconds(r.retryAfterSeconds),
 		RequestedAt:           timestamppb.New(r.requestedAt.UTC()),
 		ExpiresAt:             sqlTime(r.expiresAt),
 		LastError:             protoError(r.errCode, r.errMessage, r.errRetryable),
@@ -298,6 +352,8 @@ type messageRow struct {
 	kind              string
 	encryptionState   string
 	ackStatus         string
+	direction         string
+	source            string
 	contactRef        string
 	senderRef         string
 	payloadRef        string
@@ -319,6 +375,8 @@ func (r messageRow) toProto() *waappv1.InboundMessage {
 		Kind:              waappv1.InboundMessageKind(waappv1.InboundMessageKind_value[r.kind]),
 		EncryptionState:   waappv1.MessageEncryptionState(waappv1.MessageEncryptionState_value[r.encryptionState]),
 		AckStatus:         waappv1.MessageAckStatus(waappv1.MessageAckStatus_value[r.ackStatus]),
+		Direction:         messageDirection(r.direction),
+		Source:            messageSource(r.source),
 		ContactRef:        r.contactRef,
 		SenderRef:         r.senderRef,
 		PayloadRef:        r.payloadRef,
@@ -334,10 +392,32 @@ func (r messageRow) toProto() *waappv1.InboundMessage {
 
 func scanPostgresInboundMessage(scanner interface{ Scan(...any) error }) (*waappv1.InboundMessage, error) {
 	var r messageRow
-	if err := scanner.Scan(&r.id, &r.sessionID, &r.kind, &r.encryptionState, &r.ackStatus, &r.contactRef, &r.senderRef, &r.payloadRef, &r.providerMessageID, &r.providerTimestamp, &r.readAt, &r.deleteStatus, &r.deletedAt, &r.errCode, &r.errMessage, &r.errRetryable, &r.receivedAt); err != nil {
+	if err := scanner.Scan(&r.id, &r.sessionID, &r.kind, &r.encryptionState, &r.ackStatus, &r.direction, &r.source, &r.contactRef, &r.senderRef, &r.payloadRef, &r.providerMessageID, &r.providerTimestamp, &r.readAt, &r.deleteStatus, &r.deletedAt, &r.errCode, &r.errMessage, &r.errRetryable, &r.receivedAt); err != nil {
 		return nil, err
 	}
 	return r.toProto(), nil
+}
+
+func messageDirection(value string) waappv1.AccountMessageDirection {
+	if value == "" {
+		return waappv1.AccountMessageDirection_ACCOUNT_MESSAGE_DIRECTION_INBOUND
+	}
+	status, ok := waappv1.AccountMessageDirection_value[value]
+	if !ok {
+		return waappv1.AccountMessageDirection_ACCOUNT_MESSAGE_DIRECTION_UNSPECIFIED
+	}
+	return waappv1.AccountMessageDirection(status)
+}
+
+func messageSource(value string) waappv1.AccountMessageSource {
+	if value == "" {
+		return waappv1.AccountMessageSource_ACCOUNT_MESSAGE_SOURCE_LONG_CONNECTION
+	}
+	status, ok := waappv1.AccountMessageSource_value[value]
+	if !ok {
+		return waappv1.AccountMessageSource_ACCOUNT_MESSAGE_SOURCE_UNSPECIFIED
+	}
+	return waappv1.AccountMessageSource(status)
 }
 
 func messageDeleteStatus(value string) waappv1.MessageDeleteStatus {
@@ -442,13 +522,12 @@ type contactRow struct {
 
 func (r contactRow) toProto() *waappv1.WAContact {
 	kind := waappv1.WAContactKind(waappv1.WAContactKind_value[r.kind])
-	displayName := firstNonEmpty(storedWAContactDisplayName(r.displayName, kind, r.jid, r.number), fallbackWAContactDisplayName(kind, r.jid, r.number))
-	return &waappv1.WAContact{
+	contact := &waappv1.WAContact{
 		ContactId:        r.id,
 		WaAccountId:      r.waAccountIDValue,
 		Jid:              r.jid,
 		Number:           r.number,
-		DisplayName:      displayName,
+		DisplayName:      r.displayName,
 		WaName:           r.waName,
 		VerifiedName:     r.verifiedName,
 		ProfilePictureId: r.profilePictureID,
@@ -466,4 +545,6 @@ func (r contactRow) toProto() *waappv1.WAContact {
 			waappv1.MessageEncryptionState(waappv1.MessageEncryptionState_value[r.lastEncryption]),
 		),
 	}
+	enrichWAContactFallback(contact)
+	return contact
 }

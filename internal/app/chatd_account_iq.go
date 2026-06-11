@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -11,10 +12,17 @@ import (
 	waappv1 "github.com/byte-v-forge/wa-app/gen/go/byte/v/forge/waapp/v1"
 )
 
-const defaultAccountIQTimeout = 32 * time.Second
+const (
+	defaultAccountIQTimeout                = 32 * time.Second
+	defaultAccountSettingsOpenTimeout      = 8 * time.Second
+	defaultAccountSettingsOperationTimeout = 45 * time.Second
+	defaultAccountSettingsProxyTTL         = defaultAccountSettingsOperationTimeout + 5*time.Second
+	accountSettingsRequestTimeoutMessage   = "WA account settings request timed out"
+	accountSettingsIQTimeoutMessage        = "account settings iq timed out"
+)
 
 func (c *chatdClient) sendAccountIQ(ctx context.Context, state nativeState, input EngineAccountSettingsInput, appVersion string, request chatdNode) (chatdNode, chatdSessionUpdate, error) {
-	return c.sendIQ(ctx, state, input.RegisteredIdentityID, appVersion, request, "account settings iq timed out")
+	return c.sendIQ(ctx, state, input.RegisteredIdentityID, appVersion, request, accountSettingsIQTimeoutMessage)
 }
 
 func (c *chatdClient) sendIQ(ctx context.Context, state nativeState, registeredIdentityID string, appVersion string, request chatdNode, timeoutMessage string) (chatdNode, chatdSessionUpdate, error) {
@@ -23,40 +31,57 @@ func (c *chatdClient) sendIQ(ctx context.Context, state nativeState, registeredI
 		return chatdNode{}, chatdSessionUpdate{}, err
 	}
 	defer session.Close()
+	response, _, update, err := session.sendIQ(ctx, EngineMessageInput{}, request, c.cfg.Timeout, timeoutMessage)
+	return response, update, err
+}
 
-	conn := session.conn
-	transport := session.transport
-	update := session.update()
-	_ = conn.SetDeadline(time.Now().Add(c.cfg.Timeout))
-	if err := transport.sendNode(request); err != nil {
-		return chatdNode{}, update, chatdPhase("chatd iq write", err)
+func (s *chatdSession) sendIQ(ctx context.Context, input EngineMessageInput, request chatdNode, timeout time.Duration, timeoutMessage string) (chatdNode, []chatdReceivedItem, chatdSessionUpdate, error) {
+	if s == nil || s.conn == nil {
+		return chatdNode{}, nil, chatdSessionUpdate{}, fmt.Errorf("chatd session is not open")
 	}
-	deadline := time.Now().Add(c.cfg.Timeout)
+	if timeout <= 0 {
+		timeout = defaultChatdReadWindow
+	}
+	conn := s.conn
+	transport := s.transport
+	update := s.update()
+	deadline := time.Now().Add(timeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	if !deadline.After(time.Now()) {
+		return chatdNode{}, nil, update, errors.New(timeoutMessage)
+	}
+	_ = conn.SetDeadline(deadline)
+	defer func() { _ = conn.SetDeadline(time.Time{}) }()
+	if err := transport.sendNode(request); err != nil {
+		return chatdNode{}, nil, update, chatdPhase("chatd iq write", err)
+	}
+	items := []chatdReceivedItem{}
 	requestID := request.Attrs["id"]
 	for time.Now().Before(deadline) {
-		_ = conn.SetReadDeadline(time.Now().Add(time.Until(deadline)))
+		if ctx.Err() != nil {
+			return chatdNode{}, items, update, ctx.Err()
+		}
+		_ = conn.SetReadDeadline(deadline)
 		node, err := transport.readNode()
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				return chatdNode{}, update, errors.New(timeoutMessage)
+				return chatdNode{}, items, update, errors.New(timeoutMessage)
 			}
-			return chatdNode{}, update, chatdPhase("chatd iq read", err)
+			return chatdNode{}, items, update, chatdPhase("chatd iq read", err)
 		}
-		if ack, ok := buildAckForNode(node); ok {
-			if err := transport.sendNode(ack); err != nil {
-				return chatdNode{}, update, chatdPhase("chatd ack write", err)
-			}
+		nextUpdate, nextItems, err := s.consumeIncomingNode(input, node, update, time.Now())
+		update = nextUpdate
+		items = append(items, nextItems...)
+		if err != nil {
+			return chatdNode{}, items, update, err
 		}
-		if nextRouting := routingInfoFromNode(node); nextRouting != "" {
-			update.RoutingInfo = nextRouting
-		}
-		update.ContactHints = dedupeWAContactHints(append(update.ContactHints, contactHintsFromChatdNode(node)...))
-		update.PrivacyTokens = dedupePrivacyTokenUpdates(append(update.PrivacyTokens, privacyTokenUpdatesFromChatdNode(node)...))
 		if node.Tag == "iq" && node.Attrs["id"] == requestID {
-			return node, update, nil
+			return node, items, update, nil
 		}
 	}
-	return chatdNode{}, update, errors.New(timeoutMessage)
+	return chatdNode{}, items, update, errors.New(timeoutMessage)
 }
 
 func chatdIQError(node chatdNode) error {
@@ -66,10 +91,20 @@ func chatdIQError(node chatdNode) error {
 	message := "WA account settings request was rejected"
 	if errorNode, ok := chatdChild(node, "error"); ok {
 		if code := strings.TrimSpace(errorNode.Attrs["code"]); code != "" {
-			message = message + " (code " + code + ")"
+			message = message + chatdIQErrorCodeMessage(code)
 		}
 	}
 	return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_REJECTED, message, false)
+}
+
+func chatdIQErrorCodeMessage(code string) string {
+	if strings.HasPrefix(code, "<tok:") && strings.HasSuffix(code, ">") {
+		return " (upstream error code could not be decoded)"
+	}
+	if code == "533" {
+		return " (WA rejected this settings operation for this account right now; code 533)"
+	}
+	return " (code " + code + ")"
 }
 
 func chatdChild(node chatdNode, tag string) (chatdNode, bool) {
@@ -111,12 +146,47 @@ func chatdNodeText(node chatdNode) string {
 }
 
 func chatdNodeBool(node chatdNode, name string) bool {
-	switch strings.ToLower(chatdNodeValue(node, name)) {
-	case "true", "1", "yes", "ok", "success":
-		return true
-	default:
-		return false
+	value, _ := chatdNodeBoolValue(node, name)
+	return value
+}
+
+func chatdNodeBoolValue(node chatdNode, name string) (bool, bool) {
+	value, ok := chatdNodeStringValue(node, name)
+	if !ok {
+		return false, false
 	}
+	switch strings.ToLower(value) {
+	case "true", "1", "yes", "ok", "success":
+		return true, true
+	case "false", "0", "no", "fail", "failed":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func chatdNodeStringValue(node chatdNode, name string) (string, bool) {
+	if value := strings.TrimSpace(node.Attrs[name]); value != "" {
+		return value, true
+	}
+	child, ok := chatdChild(node, name)
+	if !ok {
+		return "", false
+	}
+	if value := strings.TrimSpace(chatdNodeText(child)); value != "" {
+		return value, true
+	}
+	for _, attr := range []string{"status", "result", "code"} {
+		if value := strings.TrimSpace(child.Attrs[attr]); value != "" {
+			return value, true
+		}
+	}
+	return "", true
+}
+
+func chatdNodeStatus(node chatdNode, name string) string {
+	value, _ := chatdNodeStringValue(node, name)
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func chatdNodeDuration(node chatdNode, name string) time.Duration {

@@ -21,6 +21,7 @@ service WaMessagingService {
   rpc GetLongConnectionStatus(GetLongConnectionStatusRequest) returns (GetLongConnectionStatusResponse);
   rpc MarkAccountMessagesRead(MarkAccountMessagesReadRequest) returns (MarkAccountMessagesReadResponse);
   rpc DeleteAccountMessages(DeleteAccountMessagesRequest) returns (DeleteAccountMessagesResponse);
+  rpc SendTextMessage(SendTextMessageRequest) returns (SendTextMessageResponse);
   rpc AcknowledgeMessage(AcknowledgeMessageRequest) returns (AcknowledgeMessageResponse);
   rpc CloseMessageSession(CloseMessageSessionRequest) returns (CloseMessageSessionResponse);
 }
@@ -81,6 +82,7 @@ enum AccountMessageSource {
   ACCOUNT_MESSAGE_SOURCE_UNSPECIFIED = 0;
   ACCOUNT_MESSAGE_SOURCE_LONG_CONNECTION = 1;
   ACCOUNT_MESSAGE_SOURCE_IMPORTED_HISTORY = 2;
+  ACCOUNT_MESSAGE_SOURCE_LOCAL_SEND = 3;
 }
 
 enum LongConnectionStatus {
@@ -122,6 +124,8 @@ message InboundMessage {
   google.protobuf.Timestamp read_at = 13;
   MessageDeleteStatus delete_status = 14;
   google.protobuf.Timestamp deleted_at = 15;
+  AccountMessageDirection direction = 16;
+  AccountMessageSource source = 17;
 }
 
 message AccountMessage {
@@ -248,6 +252,20 @@ message DeleteAccountMessagesRequest {
 message DeleteAccountMessagesResponse {
   int32 updated_count = 1;
   WaError error = 2;
+}
+
+message SendTextMessageRequest {
+  RequestContext context = 1;
+  string wa_account_id = 2;
+  string contact_ref = 3;
+  SensitiveText text = 4;
+  string client_message_id = 5;
+}
+
+message SendTextMessageResponse {
+  string provider_message_id = 1;
+  google.protobuf.Timestamp sent_at = 2;
+  WaError error = 3;
 }
 
 message AcknowledgeMessageRequest {

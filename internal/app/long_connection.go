@@ -16,9 +16,12 @@ import (
 
 const (
 	longConnectionWaitTimeout          = 25 * time.Second
+	longConnectionInitialBackoff       = time.Second
 	longConnectionMaxBackoff           = 30 * time.Second
-	longConnectionLeaseTTL             = 90 * time.Second
-	longConnectionLeaseRenewInterval   = 30 * time.Second
+	longConnectionLeaseTTL             = 30 * time.Second
+	longConnectionLeaseRenewInterval   = 10 * time.Second
+	longConnectionLeaseWaitBackoff     = time.Second
+	longConnectionLeaseReleaseTimeout  = 3 * time.Second
 	longConnectionLeaseWaitLogInterval = 20
 	longConnectionDecryptLimit         = 100
 	staleMessageSessionTTL             = 10 * time.Minute
@@ -41,8 +44,18 @@ type LongConnectionManager struct {
 }
 
 type longConnectionEntry struct {
-	cancel   context.CancelFunc
-	snapshot *waappv1.LongConnectionState
+	cancel      context.CancelFunc
+	runner      ProtocolEngine
+	leaseKey    string
+	leaseHolder string
+	snapshot    *waappv1.LongConnectionState
+}
+
+type longConnectionStopItem struct {
+	cancel      context.CancelFunc
+	runner      ProtocolEngine
+	leaseKey    string
+	leaseHolder string
 }
 
 func NewLongConnectionManager(server *Server) *LongConnectionManager {
@@ -87,6 +100,8 @@ func (m *LongConnectionManager) Ensure(ctx context.Context, loginState *waappv1.
 		return
 	}
 	entryCtx, cancel := context.WithCancel(rootCtx)
+	leaseKey := longConnectionLeaseKey(key)
+	leaseHolder := m.server.ids.NewID("walc_lease_")
 	snapshot := &waappv1.LongConnectionState{
 		LoginStateId:         loginState.GetLoginStateId(),
 		WaAccountId:          loginState.GetWaAccountId(),
@@ -96,9 +111,9 @@ func (m *LongConnectionManager) Ensure(ctx context.Context, loginState *waappv1.
 		HeartbeatSupported:   true,
 		StartedAt:            timestamppb.New(m.server.clock.Now()),
 	}
-	m.entries[key] = &longConnectionEntry{cancel: cancel, snapshot: snapshot}
+	m.entries[key] = &longConnectionEntry{cancel: cancel, leaseKey: leaseKey, leaseHolder: leaseHolder, snapshot: snapshot}
 	m.mu.Unlock()
-	go m.runEntry(entryCtx, proto.Clone(loginState).(*waappv1.LoginState), key)
+	go m.runEntry(entryCtx, proto.Clone(loginState).(*waappv1.LoginState), key, leaseKey, leaseHolder)
 	_ = ctx
 }
 
@@ -129,6 +144,48 @@ func (m *LongConnectionManager) Snapshots(req *waappv1.GetLongConnectionStatusRe
 		out = append(out, proto.Clone(s).(*waappv1.LongConnectionState))
 	}
 	return out
+}
+
+func (m *LongConnectionManager) Runner(loginState *waappv1.LoginState) ProtocolEngine {
+	if m == nil || loginState == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry := m.entries[longConnectionKey(loginState)]
+	if entry == nil || entry.cancel == nil {
+		return nil
+	}
+	return entry.runner
+}
+
+func (m *LongConnectionManager) MessageSessionID(loginState *waappv1.LoginState) string {
+	if m == nil || loginState == nil {
+		return ""
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry := m.entries[longConnectionKey(loginState)]
+	if entry == nil || entry.snapshot == nil {
+		return ""
+	}
+	return entry.snapshot.GetMessageSessionId()
+}
+
+func (m *LongConnectionManager) setRunner(key string, runner ProtocolEngine) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if entry := m.entries[key]; entry != nil {
+		entry.runner = runner
+	}
+}
+
+func (m *LongConnectionManager) clearRunner(key string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if entry := m.entries[key]; entry != nil {
+		entry.runner = nil
+	}
 }
 
 func (m *LongConnectionManager) restore(ctx context.Context) error {
@@ -172,11 +229,9 @@ func (m *LongConnectionManager) closeStaleMessageSessions(ctx context.Context) {
 	}
 }
 
-func (m *LongConnectionManager) runEntry(ctx context.Context, loginState *waappv1.LoginState, key string) {
-	backoff := 2 * time.Second
+func (m *LongConnectionManager) runEntry(ctx context.Context, loginState *waappv1.LoginState, key string, leaseKey string, leaseHolder string) {
+	backoff := longConnectionInitialBackoff
 	reconnects := int32(0)
-	leaseKey := longConnectionLeaseKey(key)
-	leaseHolder := m.server.ids.NewID("walc_lease_")
 	defer m.markStopped(key)
 	for ctx.Err() == nil {
 		m.update(key, func(snapshot *waappv1.LongConnectionState) {
@@ -199,10 +254,9 @@ func (m *LongConnectionManager) runEntry(ctx context.Context, loginState *waappv
 		}
 		if !claimed {
 			m.recordLoopError(key, reconnects, longConnectionLeaseUnavailableError())
-			if !sleepContext(ctx, backoff) {
+			if !sleepContext(ctx, longConnectionLeaseWaitBackoff) {
 				return
 			}
-			backoff = nextBackoff(backoff)
 			reconnects++
 			continue
 		}
@@ -226,7 +280,7 @@ func (m *LongConnectionManager) runEntry(ctx context.Context, loginState *waappv
 			snapshot.MessageSessionId = session.GetMessageSessionId()
 			snapshot.LastError = nil
 		})
-		runner, err := m.server.longConnectionRunner(connectionCtx, loginState)
+		runner, err := m.server.longConnectionRunner(connectionCtx, loginState, session)
 		if err != nil {
 			stopLeaseRenewal()
 			if leaseErr := readLongConnectionLeaseLoss(leaseLost); leaseErr != nil {
@@ -242,6 +296,7 @@ func (m *LongConnectionManager) runEntry(ctx context.Context, loginState *waappv
 			reconnects++
 			continue
 		}
+		m.setRunner(key, runner)
 		m.decryptPendingMessages(connectionCtx, session, runner)
 		receivedHeartbeat := false
 		for connectionCtx.Err() == nil {
@@ -280,7 +335,7 @@ func (m *LongConnectionManager) runEntry(ctx context.Context, loginState *waappv
 				}
 			})
 			receivedHeartbeat = true
-			backoff = 2 * time.Second
+			backoff = longConnectionInitialBackoff
 			m.decryptReceivedMessages(connectionCtx, session, messages, runner)
 		}
 		if err := readLongConnectionLeaseLoss(leaseLost); err != nil {
@@ -288,10 +343,12 @@ func (m *LongConnectionManager) runEntry(ctx context.Context, loginState *waappv
 		}
 		stopLeaseRenewal()
 		if ctx.Err() != nil {
+			m.clearRunner(key)
 			closeLongConnectionRunner(runner)
 			m.releaseLongConnectionLease(ctx, leaseKey, leaseHolder)
 			return
 		}
+		m.clearRunner(key)
 		closeLongConnectionRunner(runner)
 		if !receivedHeartbeat {
 			backoff = nextBackoff(backoff)
@@ -357,9 +414,20 @@ func (m *LongConnectionManager) releaseLongConnectionLease(ctx context.Context, 
 	if m == nil || m.server == nil || m.server.runtime == nil || leaseKey == "" || leaseHolder == "" {
 		return
 	}
-	if err := m.server.runtime.ReleaseLease(context.WithoutCancel(ctx), leaseKey, leaseHolder); err != nil {
+	releaseCtx, cancel := longConnectionReleaseContext(ctx)
+	defer cancel()
+	if err := m.server.runtime.ReleaseLease(releaseCtx, leaseKey, leaseHolder); err != nil {
 		log.Printf("WA long connection lease release failed: %v", sanitizeLogError(longConnectionLeaseOperationError()))
 	}
+}
+
+func longConnectionReleaseContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	} else {
+		ctx = context.WithoutCancel(ctx)
+	}
+	return context.WithTimeout(ctx, longConnectionLeaseReleaseTimeout)
 }
 
 func sendLongConnectionLeaseLoss(ch chan<- error, err error) {
@@ -490,17 +558,38 @@ func (m *LongConnectionManager) markStopped(key string) {
 		return
 	}
 	entry.cancel = nil
+	entry.runner = nil
 	entry.snapshot.Status = waappv1.LongConnectionStatus_LONG_CONNECTION_STATUS_STOPPED
 }
 
 func (m *LongConnectionManager) stopAll() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	items := []longConnectionStopItem{}
 	for _, entry := range m.entries {
 		if entry != nil && entry.cancel != nil {
-			entry.cancel()
+			items = append(items, longConnectionStopItem{cancel: entry.cancel, runner: entry.runner, leaseKey: entry.leaseKey, leaseHolder: entry.leaseHolder})
+			entry.cancel = nil
+			entry.runner = nil
+			if entry.snapshot != nil {
+				entry.snapshot.Status = waappv1.LongConnectionStatus_LONG_CONNECTION_STATUS_STOPPED
+			}
 		}
 	}
+	m.mu.Unlock()
+	for _, item := range items {
+		item.cancel()
+	}
+	var wg sync.WaitGroup
+	for _, item := range items {
+		item := item
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			closeLongConnectionRunner(item.runner)
+			m.releaseLongConnectionLease(context.Background(), item.leaseKey, item.leaseHolder)
+		}()
+	}
+	wg.Wait()
 }
 
 func (s *Server) ensureLongConnection(ctx context.Context, loginState *waappv1.LoginState) {
@@ -509,13 +598,15 @@ func (s *Server) ensureLongConnection(ctx context.Context, loginState *waappv1.L
 	}
 }
 
-func (s *Server) longConnectionRunner(ctx context.Context, loginState *waappv1.LoginState) (ProtocolEngine, error) {
+func (s *Server) longConnectionRunner(ctx context.Context, loginState *waappv1.LoginState, session *waappv1.MessageSession) (ProtocolEngine, error) {
 	engine, ok := s.runner.(*NativeEngine)
 	if !ok {
 		return s.runner, nil
 	}
+	input := longConnectionEngineInput(session)
+	input.AppVersion = s.protocolIDAppVersion(ctx, input.ProtocolProfileID)
 	if strings.TrimSpace(engine.activeProxyURL) != "" {
-		return newLongConnectionNativeEngine(engine, longConnectionNativeEngineOptions{}), nil
+		return newLongConnectionNativeEngine(engine, longConnectionNativeEngineOptions{Input: input}), nil
 	}
 	proxyEngine, release, proxied := s.optionalGatewayProxyEngine(ctx, engine, gatewayProxyEngineRequest{
 		Username:      s.longProxyUsername,
@@ -524,11 +615,24 @@ func (s *Server) longConnectionRunner(ctx context.Context, loginState *waappv1.L
 		TTL:           longConnectionWaitTimeout + longConnectionChatdOpenTimeout,
 		Mode:          DynamicProxySessionModeSticky,
 	})
-	opts := longConnectionNativeEngineOptions{Release: release}
+	opts := longConnectionNativeEngineOptions{Release: release, Input: input}
 	if proxied {
 		opts.Fallback = engine
 	}
 	return newLongConnectionNativeEngine(proxyEngine, opts), nil
+}
+
+func longConnectionEngineInput(session *waappv1.MessageSession) EngineMessageInput {
+	if session == nil {
+		return EngineMessageInput{}
+	}
+	return EngineMessageInput{
+		WAAccountID:          session.GetWaAccountId(),
+		ClientProfileID:      session.GetClientProfileId(),
+		RegisteredIdentityID: session.GetRegisteredIdentityId(),
+		ProtocolProfileID:    session.GetProtocolProfileId(),
+		MessageSessionID:     session.GetMessageSessionId(),
+	}
 }
 
 func longConnectionProxyCorrelationID(loginState *waappv1.LoginState) string {

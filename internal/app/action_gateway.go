@@ -128,10 +128,12 @@ func (g *actionGateway) generateTransientFingerprint(ctx context.Context, payloa
 
 func fingerprintSummary(profile *waappv1.PhoneFingerprintProfile) map[string]any {
 	return map[string]any{
-		"schema":         profile.GetSchema(),
-		"profile_sha256": profile.GetProfileSha256(),
-		"phone_sha256":   profile.GetPhoneSha256(),
-		"user_agent":     profile.GetUserAgent(),
+		"schema":          profile.GetSchema(),
+		"profile_sha256":  profile.GetProfileSha256(),
+		"phone_sha256":    profile.GetPhoneSha256(),
+		"device_vendor":   profile.GetDeviceVendor(),
+		"device_model":    profile.GetDeviceModel(),
+		"android_version": profile.GetAndroidVersion(),
 	}
 }
 
@@ -156,6 +158,10 @@ func (g *actionGateway) commitFingerprint(ctx context.Context, payload map[strin
 }
 
 func (g *actionGateway) requestSMSOTP(ctx context.Context, payload map[string]any) (map[string]any, error) {
+	method := registrationMethodFromPayload(payload)
+	if reason := directRegistrationMethodUnsupportedReason(method); reason != "" {
+		return registrationMethodUnsupportedMap(method, reason), nil
+	}
 	runner, route, managedRoute, err := g.registrationRequestRunner(ctx, payload)
 	if err != nil {
 		return nil, err
@@ -166,7 +172,7 @@ func (g *actionGateway) requestSMSOTP(ctx context.Context, payload map[string]an
 		WaAccountId:       textField(payload, "wa_account_id"),
 		ClientProfileId:   textField(payload, "client_profile_id"),
 		ProtocolProfileId: textField(payload, "protocol_profile_id"),
-		DeliveryMethod:    waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS,
+		DeliveryMethod:    method,
 	}, runner)
 	runner.CloseIdleConnections()
 	if err != nil {
@@ -188,13 +194,18 @@ func (g *actionGateway) requestSMSOTP(ctx context.Context, payload map[string]an
 			return nil, err
 		}
 	}
-	return map[string]any{
+	response := map[string]any{
 		"success":                 record.GetStatus() == waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_SENT || record.GetStatus() == waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_WAITING,
 		"status":                  record.GetStatus().String(),
 		"verification_request_id": record.GetVerificationRequestId(),
 		"verification_request":    protoMap(record),
+		"method_statuses":         protoMethodStatusMaps(record.GetMethodStatuses()),
 		"proxy":                   registrationProxyRouteMap(route, managedRoute),
-	}, nil
+	}
+	if seconds := durationSeconds(record.GetRetryAfter()); seconds > 0 {
+		response["retry_after_seconds"] = seconds
+	}
+	return response, nil
 }
 
 func (g *actionGateway) awaitOTP(ctx context.Context, payload map[string]any) (map[string]any, error) {
@@ -497,7 +508,7 @@ func (s *Server) commitNativeState(ctx context.Context, phone *waappv1.PhoneTarg
 	account, err := s.store.FindWAAccountByPhone(ctx, phone.GetE164Number())
 	if err != nil {
 		now := s.clock.Now()
-		account = newWAAccount(s.ids.NewID("waacc_"), phone, waappv1.WAAccountStatus_WA_ACCOUNT_STATUS_PENDING_REGISTRATION, &waappv1.AuditStamp{CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now)})
+		account = newWAAccount(s.ids.NewID("waacc_"), "", phone, waappv1.WAAccountStatus_WA_ACCOUNT_STATUS_PENDING_REGISTRATION, &waappv1.AuditStamp{CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now)})
 		account, err = s.saveWAAccount(ctx, account)
 		if err != nil {
 			return nil, nil, nil, err
@@ -537,6 +548,10 @@ type nativeStateSaver interface {
 func (s *Server) ensureDefaultProtocolProfile(ctx context.Context) (*waappv1.ProtocolProfile, error) {
 	protocolID := "waproto_native"
 	if profile, err := s.store.GetProtocolProfile(ctx, protocolID); err == nil {
+		if strings.TrimSpace(profile.GetAppVersion()) == "" {
+			profile.AppVersion = defaultWAAppVersion
+			_ = s.store.SaveProtocolProfile(ctx, profile)
+		}
 		return profile, nil
 	}
 	now := s.clock.Now()
@@ -549,6 +564,7 @@ func (s *Server) ensureDefaultProtocolProfile(ctx context.Context) (*waappv1.Pro
 		ProtocolProfileId: protocolID,
 		AppArtifactId:     artifactID,
 		DisplayName:       "WA native protocol",
+		AppVersion:        defaultWAAppVersion,
 		Status:            waappv1.ProtocolProfileStatus_PROTOCOL_PROFILE_STATUS_ACTIVE,
 		Capabilities: []waappv1.ProtocolCapability{
 			waappv1.ProtocolCapability_PROTOCOL_CAPABILITY_ACCOUNT_PROBE,
@@ -588,6 +604,13 @@ func (g *actionGateway) registrationRequestRunner(ctx context.Context, payload m
 	if actionProxyURL(payload) != "" {
 		return engine, DynamicProxyRoute{}, false, nil
 	}
+	if route, ok := g.staticRegistrationProxyRoute(); ok {
+		proxied, err := engine.WithProxyURL(route.ProxyURL)
+		if err != nil {
+			return nil, DynamicProxyRoute{}, false, err
+		}
+		return proxied, route, true, nil
+	}
 	if g == nil || g.server == nil || g.server.proxyRuntime == nil {
 		return engine, DynamicProxyRoute{}, false, nil
 	}
@@ -610,6 +633,13 @@ func (g *actionGateway) registrationSubmitRunner(ctx context.Context, payload ma
 	}
 	if actionProxyURL(payload) != "" {
 		return engine, DynamicProxyRoute{}, false, nil
+	}
+	if route, ok := g.staticRegistrationProxyRoute(); ok {
+		proxied, err := engine.WithProxyURL(route.ProxyURL)
+		if err != nil {
+			return nil, DynamicProxyRoute{}, false, err
+		}
+		return proxied, route, true, nil
 	}
 	verificationRequestID := textField(payload, "verification_request_id")
 	route, err := g.loadRegistrationProxyRoute(ctx, verificationRequestID)
@@ -655,8 +685,24 @@ func (g *actionGateway) registrationGatewayProxy(ctx context.Context, payload ma
 	})
 }
 
+func (g *actionGateway) staticRegistrationProxyRoute() (DynamicProxyRoute, bool) {
+	if g == nil || g.server == nil {
+		return DynamicProxyRoute{}, false
+	}
+	if strings.TrimSpace(g.server.registrationProxyURL) != "" {
+		return staticProxyRoute("registration", g.server.registrationProxyURL, staticRegistrationProxyMode), true
+	}
+	if strings.TrimSpace(g.server.commonProxyURL) != "" {
+		return staticProxyRoute("common", g.server.commonProxyURL, staticCommonProxyMode), true
+	}
+	return DynamicProxyRoute{}, false
+}
+
 func (g *actionGateway) saveRegistrationProxyRoute(ctx context.Context, verificationRequestID string, route DynamicProxyRoute) error {
 	if strings.TrimSpace(verificationRequestID) == "" || strings.TrimSpace(route.ProxyURL) == "" {
+		return nil
+	}
+	if isStaticProxyRoute(route) {
 		return nil
 	}
 	now := time.Now().UTC()
@@ -717,6 +763,9 @@ func (g *actionGateway) releaseProxyRoute(ctx context.Context, route DynamicProx
 	if g == nil || g.server == nil {
 		return
 	}
+	if isStaticProxyRoute(route) {
+		return
+	}
 	g.server.releaseGatewayProxyRoute(ctx, route, "WA_REGISTRATION")
 }
 
@@ -740,12 +789,17 @@ func registrationProxyRouteMap(route DynamicProxyRoute, managed bool) map[string
 		return map[string]any{}
 	}
 	result := map[string]any{
-		"proxy_mode":     firstNonEmpty(route.ProxyMode, "US_STICKY_DYNAMIC_IP"),
-		"country_code":   firstNonEmpty(route.CountryCode, "US"),
-		"account_id":     route.AccountID,
-		"route_id":       route.RouteID,
-		"proxy_url":      route.ProxyURL,
-		"proxy_username": route.Username,
+		"proxy_mode":   firstNonEmpty(route.ProxyMode, "US_STICKY_DYNAMIC_IP"),
+		"country_code": firstNonEmpty(route.CountryCode, "US"),
+	}
+	if strings.TrimSpace(route.AccountID) != "" {
+		result["account_id"] = route.AccountID
+	}
+	if strings.TrimSpace(route.RouteID) != "" {
+		result["route_id"] = route.RouteID
+	}
+	if strings.TrimSpace(route.Username) != "" {
+		result["proxy_username"] = route.Username
 	}
 	if !route.ExpiresAt.IsZero() {
 		result["expires_at"] = route.ExpiresAt.UTC().Format(time.RFC3339)

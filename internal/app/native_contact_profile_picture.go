@@ -32,11 +32,15 @@ type contactProfilePictureLocation struct {
 	InlineData []byte
 }
 
-func (e *NativeEngine) ResolveContactProfilePicture(ctx context.Context, input EngineContactProfilePictureInput) EngineContactProfilePictureResult {
-	return e.resolveContactProfilePicture(ctx, input)
+type chatdIQSender interface {
+	sendIQ(context.Context, nativeState, string, string, chatdNode, string) (chatdNode, chatdSessionUpdate, error)
 }
 
-func (e *NativeEngine) resolveContactProfilePicture(ctx context.Context, input EngineContactProfilePictureInput) EngineContactProfilePictureResult {
+func (e *NativeEngine) ResolveContactProfilePicture(ctx context.Context, input EngineContactProfilePictureInput) EngineContactProfilePictureResult {
+	return e.resolveContactProfilePictureWithSender(ctx, input, nil)
+}
+
+func (e *NativeEngine) resolveContactProfilePictureWithSender(ctx context.Context, input EngineContactProfilePictureInput, sender chatdIQSender) EngineContactProfilePictureResult {
 	jid := normalizeWAJID(input.ContactJID)
 	if input.WAAccountID == "" || input.ClientProfileID == "" || input.RegisteredIdentityID == "" || jid == "" {
 		return EngineContactProfilePictureResult{Err: NewError(waappv1.WaErrorCode_WA_ERROR_CODE_VALIDATION_FAILED, "WA contact profile picture input is incomplete", false)}
@@ -58,14 +62,16 @@ func (e *NativeEngine) resolveContactProfilePicture(ctx context.Context, input E
 	}
 	operationCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	proxyURL, err := e.proxyURL()
-	if err != nil {
-		return EngineContactProfilePictureResult{Err: err}
+	if sender == nil {
+		proxyURL, err := e.proxyURL()
+		if err != nil {
+			return EngineContactProfilePictureResult{Err: err}
+		}
+		cfg := chatdConfigForState(proxyURL, state, timeout)
+		cfg.MaxEndpoints = 1
+		sender = newChatdClient(cfg)
 	}
-	cfg := chatdConfigForState(proxyURL, state, timeout)
-	cfg.MaxEndpoints = 1
-	client := newChatdClient(cfg)
-	locations, update, err := e.contactProfilePictureLocationsFromProfileIQ(operationCtx, client, state, input, jid)
+	locations, update, err := e.contactProfilePictureLocationsFromProfileIQ(operationCtx, sender, state, input, jid)
 	if applyChatdSessionUpdateState(&state, update) {
 		_ = e.saveState(ctx, input.ClientProfileID, state)
 	}
@@ -82,7 +88,7 @@ func (e *NativeEngine) resolveContactProfilePicture(ctx context.Context, input E
 			contentType, err := profilePictureContentType(location.InlineData, "")
 			return EngineContactProfilePictureResult{ProfilePictureID: location.ID, ContentType: contentType, Data: location.InlineData, Err: err}
 		}
-		data, contentType, downloadErr := e.downloadContactProfilePicture(operationCtx, location, state.UserAgent)
+		data, contentType, downloadErr := e.downloadContactProfilePicture(operationCtx, location, nativeUserAgentForState(state, input.AppVersion))
 		if downloadErr == nil {
 			return EngineContactProfilePictureResult{ProfilePictureID: location.ID, ContentType: contentType, Data: data}
 		}
@@ -97,8 +103,8 @@ func (e *NativeEngine) resolveContactProfilePicture(ctx context.Context, input E
 	return EngineContactProfilePictureResult{Err: NewError(waappv1.WaErrorCode_WA_ERROR_CODE_MESSAGE_NOT_FOUND, "WA profile picture not found", false)}
 }
 
-func (e *NativeEngine) contactProfilePictureLocationsFromProfileIQ(ctx context.Context, client *chatdClient, state nativeState, input EngineContactProfilePictureInput, jid string) ([]contactProfilePictureLocation, chatdSessionUpdate, error) {
-	targets := contactProfilePictureTargets(state, jid, input.ContactPNJID, e.clock.Now())
+func (e *NativeEngine) contactProfilePictureLocationsFromProfileIQ(ctx context.Context, sender chatdIQSender, state nativeState, input EngineContactProfilePictureInput, jid string) ([]contactProfilePictureLocation, chatdSessionUpdate, error) {
+	targets := contactProfilePictureTargets(jid, input.ContactPNJID)
 	if len(targets) == 0 {
 		return nil, chatdSessionUpdate{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_VALIDATION_FAILED, "WA contact profile picture target is incomplete", false)
 	}
@@ -108,9 +114,9 @@ func (e *NativeEngine) contactProfilePictureLocationsFromProfileIQ(ctx context.C
 	for _, target := range targets {
 		for _, pictureType := range contactProfilePictureQueryTypes {
 			for _, pictureID := range contactProfilePictureRequestIDs(input.ContactPictureID) {
-				trustedContactToken := trustedContactTokenForProfilePicture(state, target, input.ContactPNJID, e.clock.Now())
+				trustedContactToken := trustedContactTokenForProfilePicture(state, target, e.clock.Now())
 				request := buildContactProfilePictureIQ(e.ids.NewID("wappic_"), target, pictureType, pictureID, trustedContactToken)
-				response, update, err := client.sendIQ(ctx, state, input.RegisteredIdentityID, defaultWAAppVersion, request, "profile picture iq timed out")
+				response, update, err := sender.sendIQ(ctx, state, input.RegisteredIdentityID, input.AppVersion, request, "profile picture iq timed out")
 				lastUpdate = mergeContactProfilePictureUpdate(lastUpdate, update)
 				applyChatdSessionUpdateState(&state, update)
 				if err != nil {
@@ -150,32 +156,13 @@ func (e *NativeEngine) contactProfilePictureLocationsFromProfileIQ(ctx context.C
 }
 
 func mergeContactProfilePictureUpdate(current chatdSessionUpdate, next chatdSessionUpdate) chatdSessionUpdate {
-	if next.RoutingInfo != "" {
-		current.RoutingInfo = next.RoutingInfo
-	}
-	if next.Endpoint.Host != "" {
-		current.Endpoint = next.Endpoint
-	}
-	if next.ServerStaticPublic != "" {
-		current.ServerStaticPublic = next.ServerStaticPublic
-	}
-	if len(next.ContactHints) > 0 {
-		current.ContactHints = append(current.ContactHints, next.ContactHints...)
-	}
-	if len(next.PrivacyTokens) > 0 {
-		current.PrivacyTokens = dedupePrivacyTokenUpdates(append(current.PrivacyTokens, next.PrivacyTokens...))
-	}
-	return current
+	return mergeChatdSessionUpdate(current, next)
 }
 
-func contactProfilePictureTargets(state nativeState, jid string, pnJID string, now time.Time) []string {
+func contactProfilePictureTargets(jid string, pnJID string) []string {
 	jid = normalizeWAJID(jid)
 	pnJID = normalizeWAJID(pnJID)
-	candidates := []string{}
-	if len(trustedContactTokenForProfilePicture(state, jid, pnJID, now)) > 0 {
-		candidates = append(candidates, jid)
-	}
-	candidates = append(candidates, pnJID, jid)
+	candidates := []string{pnJID, jid}
 	out := []string{}
 	seen := map[string]struct{}{}
 	for _, candidate := range candidates {
@@ -197,7 +184,7 @@ func contactProfilePictureRequestIDs(pictureID string) []string {
 	if pictureID == "" {
 		return []string{""}
 	}
-	return []string{"", pictureID}
+	return []string{pictureID, ""}
 }
 
 func buildContactProfilePictureIQ(id string, jid string, pictureType string, pictureID string, trustedContactToken []byte) chatdNode {
@@ -226,9 +213,6 @@ func contactProfilePictureNeedsURLQuery(jid string, pictureType string) bool {
 
 func contactProfilePictureTargetNeedsURLQuery(jid string) bool {
 	jid = normalizeWAJID(jid)
-	if strings.HasSuffix(jid, "@lid") {
-		return true
-	}
 	user := strings.SplitN(jid, "@", 2)[0]
 	user = strings.SplitN(user, ":", 2)[0]
 	value, ok := parsePositiveInt64(user)
@@ -432,14 +416,14 @@ func profilePictureDownloadURLs(location contactProfilePictureLocation) []string
 		seen[endpoint] = struct{}{}
 		out = append(out, endpoint)
 	}
+	if endpoint, ok := normalizeProfilePictureURL(location.URL); ok {
+		appendEndpoint(endpoint)
+	}
 	directPath := strings.TrimSpace(location.DirectPath)
 	if profilePictureDirectPathSigned(directPath) {
 		if endpoint, ok := normalizeProfilePictureURL(directPath); ok {
 			appendEndpoint(endpoint)
 		}
-	}
-	if endpoint, ok := normalizeProfilePictureURL(location.URL); ok {
-		appendEndpoint(endpoint)
 	}
 	return out
 }
@@ -483,7 +467,9 @@ func profilePictureURLHostAllowed(host string) bool {
 	if cut, _, ok := strings.Cut(host, ":"); ok {
 		host = cut
 	}
-	return host == "whatsapp.net" || strings.HasSuffix(host, ".whatsapp.net") || host == "fbcdn.net" || strings.HasSuffix(host, ".fbcdn.net")
+	return host == "whatsapp.net" || strings.HasSuffix(host, ".whatsapp.net") ||
+		host == "fbcdn.net" || strings.HasSuffix(host, ".fbcdn.net") ||
+		host == "fbsbx.com" || strings.HasSuffix(host, ".fbsbx.com")
 }
 
 func readLimitedProfilePicture(reader io.Reader) ([]byte, error) {

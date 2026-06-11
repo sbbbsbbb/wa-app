@@ -1,45 +1,156 @@
-import type { ReactNode } from 'react';
+import { useMemo, useState } from 'react';
 import { Info, Loader2, Plus } from 'lucide-react';
 import { Link, NavLink } from 'react-router';
+import { Button } from '@/components/ui/button';
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty';
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarHeader,
+  SidebarInput,
+  SidebarMenuAction,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSkeleton,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
+} from '@/components/ui/sidebar';
 import type { LongConnectionState } from '../proto/byte/v/forge/waapp/v1/messaging';
 import type { WAAccount } from '../proto/byte/v/forge/waapp/v1/profile';
-import { waAccountID, waAccountTitle } from './wa-api';
-import { WhatsAppIcon } from './wa-brand-icon';
+import { waAccountID } from './wa-api';
+import { WaAccountAvatar } from './wa-account-avatar';
 import { WaConnectionDot } from './wa-connection-dot';
 import { waAccountPath, waChatsPath } from './wa-route-paths';
 
-export function WaAccountRail({ accounts, selectedID, connections, loading, connectionsLoading }: { accounts: WAAccount[]; selectedID: string; connections: Map<string, LongConnectionState>; loading: boolean; connectionsLoading: boolean }) {
+type RailProps = { accounts: WAAccount[]; selectedID: string; avatarVersion: string; connections: Map<string, LongConnectionState>; loading: boolean; connectionsLoading: boolean; hasNextPage: boolean; loadingMore: boolean; onLoadMore: () => void };
+type AccountItemProps = { account: WAAccount; selected: boolean; avatarVersion: string; connection?: LongConnectionState; loading: boolean };
+
+const railButtonClass = 'h-12 gap-2 p-1! group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-12! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-1!';
+const accountActionClass = 'top-1/2! right-2! size-7! -translate-y-1/2 rounded-lg';
+const collapsedTextClass = 'group-data-[collapsible=icon]:hidden';
+
+export function WaAccountRail({ accounts, selectedID, avatarVersion, connections, loading, connectionsLoading, hasNextPage, loadingMore, onLoadMore }: RailProps) {
+  const [query, setQuery] = useState('');
+  const { state } = useSidebar();
+  const expanded = state === 'expanded';
+  const visibleAccounts = useFilteredAccounts(accounts, expanded ? query : '');
   return (
-    <aside className="grid h-dvh grid-rows-[auto_1fr_auto] border-r border-border bg-card">
-      <div className="grid h-16 place-items-center border-b border-border">
-        <span className="grid size-10 place-items-center rounded-2xl bg-emerald-50"><WhatsAppIcon className="size-7" /></span>
-      </div>
-      <div className="min-h-0 overflow-y-auto p-2">
-        {loading && <div className="grid h-14 place-items-center"><Loader2 className="size-4 animate-spin text-muted-foreground" /></div>}
-        {accounts.map((account) => <AccountLink key={waAccountID(account)} account={account} selected={waAccountID(account) === selectedID} connection={connections.get(waAccountID(account))} loading={connectionsLoading} />)}
-      </div>
-      <div className="grid gap-2 border-t border-border p-2">
-        {selectedID ? <RailLink title="账号信息" to={waAccountPath(selectedID)}><Info size={18} /></RailLink> : <RailButton disabled title="账号信息"><Info size={18} /></RailButton>}
-        <RailLink title="添加账号" to="/accounts/new"><Plus size={20} /></RailLink>
-      </div>
-    </aside>
+    <Sidebar collapsible="icon" aria-label="WA 账号" className="border-r border-border">
+      <SidebarHeader className="h-16 justify-center border-b border-sidebar-border">
+        <RailHeader value={query} onChange={setQuery} />
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarGroup className="p-1">
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {loading ? <LoadingItems /> : null}
+              {visibleAccounts.map((account) => {
+                const id = waAccountID(account);
+                return <AccountItem key={id} account={account} selected={id === selectedID} avatarVersion={avatarVersion} connection={connections.get(id)} loading={connectionsLoading} />;
+              })}
+            </SidebarMenu>
+            {!loading && visibleAccounts.length === 0 ? <EmptyAccounts searching={query.trim() !== ''} /> : null}
+            {expanded && hasNextPage ? <LoadMoreButton loading={loadingMore} onLoadMore={onLoadMore} /> : null}
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarRail aria-label={expanded ? '收起账号栏' : '展开账号栏'} title={expanded ? '收起账号栏' : '展开账号栏'} />
+    </Sidebar>
   );
 }
 
-function AccountLink({ account, selected, connection, loading }: { account: WAAccount; selected: boolean; connection?: LongConnectionState; loading: boolean }) {
+function RailHeader({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="flex h-10 items-center gap-2 group-data-[collapsible=icon]:justify-center">
+      <SidebarInput className="h-8 group-data-[collapsible=icon]:hidden" value={value} onChange={(event) => onChange(event.target.value)} placeholder="搜索手机号" aria-label="搜索账号" />
+      <Button asChild size="icon" variant="ghost" className="size-8 group-data-[collapsible=icon]:hidden" title="添加账号" aria-label="添加账号"><Link to="/accounts/new"><Plus size={16} /></Link></Button>
+      <SidebarTrigger className="shrink-0" aria-label="切换账号栏" title="切换账号栏" />
+    </div>
+  );
+}
+
+function AccountItem({ account, selected, avatarVersion, connection, loading }: AccountItemProps) {
   const id = waAccountID(account);
+  const label = waAccountRailLabel(account);
   return (
-    <NavLink className={({ isActive }) => `relative mb-2 grid size-12 place-items-center rounded-2xl transition hover:bg-muted ${selected || isActive ? 'bg-primary/10 ring-2 ring-primary/20' : ''}`} to={waChatsPath(id)} title={waAccountTitle(account)} aria-label={waAccountTitle(account)}>
-      <span className="grid size-9 place-items-center rounded-full bg-emerald-50"><WhatsAppIcon className="size-6" title={waAccountTitle(account)} /></span>
-      <WaConnectionDot className="absolute bottom-1.5 right-1.5 ring-2 ring-card" connection={connection} loading={loading} />
-    </NavLink>
+    <SidebarMenuItem>
+      <SidebarMenuButton asChild size="lg" isActive={selected} tooltip={label.tooltip} className={railButtonClass}>
+        <NavLink to={waChatsPath(id)} title={label.tooltip} aria-label={label.tooltip}>
+          <span className="relative shrink-0">
+            <WaAccountAvatar account={account} version={avatarVersion} size="md" />
+            <WaConnectionDot className="absolute bottom-0 right-0" connection={connection} loading={loading} />
+          </span>
+          <span className={`min-w-0 flex-1 ${collapsedTextClass}`}>
+            <span className="block truncate text-sm font-medium">{label.primary}</span>
+            {label.subtitle ? <span className="block truncate font-mono text-xs text-muted-foreground">{label.subtitle}</span> : null}
+          </span>
+        </NavLink>
+      </SidebarMenuButton>
+      <SidebarMenuAction asChild showOnHover={!selected} className={accountActionClass}>
+        <Link to={waAccountPath(id)} title="账号详情" aria-label={`${label.tooltip} 账号详情`}><Info /></Link>
+      </SidebarMenuAction>
+    </SidebarMenuItem>
   );
 }
 
-function RailLink({ children, title, to }: { children: ReactNode; title: string; to: string }) {
-  return <Link className="grid size-12 place-items-center rounded-2xl text-muted-foreground transition hover:bg-muted hover:text-foreground" to={to} title={title} aria-label={title}>{children}</Link>;
+function LoadMoreButton({ loading, onLoadMore }: { loading: boolean; onLoadMore: () => void }) {
+  return <Button className="mt-2 w-full" variant="outline" onClick={onLoadMore} disabled={loading}>{loading ? <Loader2 className="size-4 animate-spin" /> : null}加载更多账号</Button>;
 }
 
-function RailButton({ children, title, disabled }: { children: ReactNode; title: string; disabled?: boolean }) {
-  return <button className="grid size-12 place-items-center rounded-2xl text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-40" type="button" title={title} aria-label={title} disabled={disabled}>{children}</button>;
+function LoadingItems() {
+  return <><SidebarMenuItem><SidebarMenuSkeleton showIcon /></SidebarMenuItem><SidebarMenuItem><SidebarMenuSkeleton showIcon /></SidebarMenuItem></>;
+}
+
+function EmptyAccounts({ searching }: { searching: boolean }) {
+  return <Empty className="mt-4 border-0 p-4"><EmptyHeader><EmptyTitle>{searching ? '没有匹配账号' : '还没有账号'}</EmptyTitle><EmptyDescription>{searching ? '没有匹配的已加载账号' : '添加账号后会显示在这里'}</EmptyDescription></EmptyHeader></Empty>;
+}
+
+function useFilteredAccounts(accounts: WAAccount[], query: string) {
+  return useMemo(() => {
+    const normalized = normalizeQuery(query);
+    if (!normalized) return accounts;
+    return accounts.filter((account) => normalizeQuery(waAccountPhoneSearchText(account)).includes(normalized));
+  }, [accounts, query]);
+}
+
+function waAccountPhone(account: WAAccount) {
+  const phone = account.phone;
+  const callingCode = phoneCallingCode(phone?.country_calling_code || '');
+  const nationalNumber = (phone?.national_number || '').trim();
+  if (callingCode && nationalNumber) return `${callingCode} ${nationalNumber}`;
+  return formatE164Number(phone?.e164_number || '', callingCode);
+}
+
+function waAccountPhoneSearchText(account: WAAccount) {
+  const phone = account.phone;
+  return `${waAccountPhone(account)} ${phone?.e164_number || ''} ${phone?.national_number || ''}`;
+}
+
+function formatE164Number(value: string, callingCode: string) {
+  value = value.trim();
+  if (!value || !callingCode || !value.startsWith(callingCode)) return value;
+  const nationalNumber = value.slice(callingCode.length).trim();
+  return nationalNumber ? `${callingCode} ${nationalNumber}` : value;
+}
+
+function phoneCallingCode(value: string) {
+  value = value.trim();
+  if (!value) return '';
+  return value.startsWith('+') ? value : `+${value}`;
+}
+
+function waAccountRailLabel(account: WAAccount) {
+  const name = account.display_name?.trim() || '';
+  const phone = waAccountPhone(account);
+  const primary = name || phone || '未录入手机号';
+  const subtitle = name && phone ? phone : '';
+  return { primary, subtitle, tooltip: subtitle ? `${primary} · ${subtitle}` : primary };
+}
+
+function normalizeQuery(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, '');
 }

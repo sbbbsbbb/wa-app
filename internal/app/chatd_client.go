@@ -19,11 +19,12 @@ import (
 )
 
 const (
-	defaultChatdHost       = "g.whatsapp.net"
-	defaultChatdPort       = 443
-	defaultChatdMaxFrame   = 4 << 20
-	defaultChatdReadWindow = 20 * time.Second
-	defaultChatdKeepAlive  = 30 * time.Second
+	defaultChatdHost                   = "g.whatsapp.net"
+	defaultChatdPort                   = 443
+	defaultChatdMaxFrame               = 4 << 20
+	defaultChatdReadWindow             = 20 * time.Second
+	defaultChatdKeepAlive              = 30 * time.Second
+	defaultChatdPostMessageDrainWindow = 250 * time.Millisecond
 )
 
 type chatdClientConfig struct {
@@ -35,6 +36,7 @@ type chatdClientConfig struct {
 	ProxyURL      string
 	InsecureTLS   bool
 	Timeout       time.Duration
+	OpenTimeout   time.Duration
 	MaxFrameBytes int
 	MaxEndpoints  int
 }
@@ -64,6 +66,11 @@ type chatdSessionUpdate struct {
 	PrivacyTokens      []nativePrivacyTokenUpdate
 }
 
+type chatdReceivedItem struct {
+	message *waappv1.InboundMessage
+	payload *chatdEncPayload
+}
+
 func chatdPhase(phase string, err error) error {
 	if err == nil {
 		return nil
@@ -87,6 +94,13 @@ func newChatdClient(cfg chatdClientConfig) *chatdClient {
 	return &chatdClient{cfg: cfg, codec: newBinaryNodeCodec()}
 }
 
+func (c *chatdClient) openTimeout() time.Duration {
+	if c.cfg.OpenTimeout > 0 {
+		return c.cfg.OpenTimeout
+	}
+	return c.cfg.Timeout
+}
+
 func (c *chatdClient) receiveBatch(ctx context.Context, state nativeState, input EngineMessageInput, appVersion string, now time.Time) ([]*waappv1.InboundMessage, []chatdEncPayload, chatdSessionUpdate, error) {
 	session, err := c.openSession(ctx, state, input.RegisteredIdentityID, defaultLoginPayload, appVersion)
 	if err != nil {
@@ -97,12 +111,18 @@ func (c *chatdClient) receiveBatch(ctx context.Context, state nativeState, input
 }
 
 func (c *chatdClient) openSession(ctx context.Context, state nativeState, registeredIdentityID string, payloadBuilder func(loginIdentity, nativeState, string) []byte, appVersion string) (*chatdSession, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var lastErr error
 	for _, endpoint := range c.endpoints() {
-		session, err := c.openEndpointSession(ctx, endpoint, state, registeredIdentityID, payloadBuilder, appVersion)
+		endpointCtx, cancel := context.WithTimeout(ctx, c.openTimeout())
+		session, err := c.openEndpointSession(endpointCtx, endpoint, state, registeredIdentityID, payloadBuilder, appVersion)
 		if err == nil {
+			cancel()
 			return session, nil
 		}
+		cancel()
 		lastErr = fmt.Errorf("chatd endpoint %s failed: %w", endpoint.address(), err)
 		if ctx.Err() != nil {
 			if lastErr != nil {
@@ -140,7 +160,9 @@ func (c *chatdClient) openEndpointSession(ctx context.Context, endpoint chatdEnd
 	if err != nil {
 		return nil, chatdPhase("chatd dial", err)
 	}
-	_ = conn.SetDeadline(time.Now().Add(c.cfg.Timeout))
+	stopContextClose := closeChatdConnOnContext(ctx, conn)
+	defer stopContextClose()
+	_ = conn.SetDeadline(time.Now().Add(c.openTimeout()))
 	rw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
 	keys, err := doNoiseHandshake(rw, privateKey, publicKey, loginPayload, routingInfo, c.cfg.MaxFrameBytes)
 	if err != nil {
@@ -206,6 +228,23 @@ func (s *chatdSession) Close() error {
 	return s.conn.Close()
 }
 
+func closeChatdConnOnContext(ctx context.Context, conn net.Conn) func() {
+	if ctx == nil || conn == nil {
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
+	return func() {
+		close(done)
+	}
+}
+
 func (s *chatdSession) update() chatdSessionUpdate {
 	if s == nil {
 		return chatdSessionUpdate{}
@@ -223,57 +262,104 @@ func (s *chatdSession) receiveBatch(input EngineMessageInput, now time.Time) ([]
 		maxMessages = 10
 	}
 	deadline := waitDeadline(input.WaitTimeout)
-	messages := []*waappv1.InboundMessage{}
-	payloads := []chatdEncPayload{}
-	for len(messages) < maxMessages && time.Now().Before(deadline) {
+	items := []chatdReceivedItem{}
+	for len(items) < maxMessages && time.Now().Before(deadline) {
 		_ = s.conn.SetReadDeadline(time.Now().Add(time.Until(deadline)))
 		node, err := s.transport.readNode()
 		if err != nil {
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				break
 			}
-			if len(messages) > 0 {
+			if len(items) > 0 {
 				break
 			}
 			return nil, nil, update, chatdPhase("chatd frame read", err)
 		}
-		if node.Tag == "xmlstreamend" {
-			return nil, nil, update, newChatdError("server closed xml stream")
-		}
-		if isChatdTerminalNode(node) {
-			return nil, nil, update, newChatdError("server sent %s", controlNodeSummary(node))
-		}
-		if ack, ok := buildAckForNode(node); ok {
-			if err := s.transport.sendNode(ack); err != nil {
-				return nil, nil, update, chatdPhase("chatd ack write", err)
-			}
-		}
-		if nextRouting := routingInfoFromNode(node); nextRouting != "" {
-			update.RoutingInfo = nextRouting
-		}
-		update.ContactHints = dedupeWAContactHints(append(update.ContactHints, contactHintsFromChatdNode(node)...))
-		update.PrivacyTokens = dedupePrivacyTokenUpdates(append(update.PrivacyTokens, privacyTokenUpdatesFromChatdNode(node)...))
-		encs := iterEncPayloads(node)
-		if len(encs) == 0 {
-			if node.Tag != "message" {
-				continue
-			}
-			contact := firstNonEmpty(node.Attrs["from"], node.Attrs["participant"])
-			sender := firstNonEmpty(node.Attrs["participant"], node.Attrs["from"])
-			payloadSummary := nodePayloadSummary(node)
-			messages = append(messages, &waappv1.InboundMessage{MessageId: inboundMessageID(input.WAAccountID, node.Attrs["id"], node.Tag, sender, payloadSummary), MessageSessionId: input.MessageSessionID, Kind: inboundKind(node.Tag), EncryptionState: waappv1.MessageEncryptionState_MESSAGE_ENCRYPTION_STATE_PLAINTEXT, AckStatus: ackStatusForNode(node), ContactRef: contact, SenderRef: sender, PayloadRef: "node:" + redacted(payloadSummary), ProviderMessageId: node.Attrs["id"], ProviderTimestamp: chatdProviderTimestamp(node.Attrs["t"]), DeleteStatus: waappv1.MessageDeleteStatus_MESSAGE_DELETE_STATUS_NOT_DELETED, ReceivedAt: timestamppb.New(now)})
-			continue
-		}
-		for _, enc := range encs {
-			payloadRef := payloadRefForEnc(input.WAAccountID, enc.Payload)
-			payloads = append(payloads, enc)
-			messages = append(messages, &waappv1.InboundMessage{MessageId: inboundMessageID(input.WAAccountID, enc.StanzaID, node.Tag, enc.Sender, enc.Path+":"+hexKey(enc.Payload)), MessageSessionId: input.MessageSessionID, Kind: inboundKind(node.Tag), EncryptionState: waappv1.MessageEncryptionState_MESSAGE_ENCRYPTION_STATE_ENCRYPTED, AckStatus: ackStatusForNode(node), ContactRef: enc.Contact, SenderRef: enc.Sender, PayloadRef: payloadRef, ProviderMessageId: enc.StanzaID, ProviderTimestamp: chatdProviderTimestamp(enc.StanzaTimestamp), DeleteStatus: waappv1.MessageDeleteStatus_MESSAGE_DELETE_STATUS_NOT_DELETED, ReceivedAt: timestamppb.New(now)})
-			if len(messages) >= maxMessages {
+		nextUpdate, nextItems, err := s.consumeIncomingNode(input, node, update, now)
+		update = nextUpdate
+		if err != nil {
+			if len(items) > 0 {
 				break
 			}
+			return nil, nil, update, err
+		}
+		before := len(items)
+		items = appendReceivedItems(items, nextItems, maxMessages)
+		if len(items) > before && len(items) < maxMessages {
+			deadline = minTime(deadline, time.Now().Add(defaultChatdPostMessageDrainWindow))
 		}
 	}
+	messages, payloads := splitReceivedItems(items)
 	return messages, payloads, update, nil
+}
+
+func (s *chatdSession) consumeIncomingNode(input EngineMessageInput, node chatdNode, update chatdSessionUpdate, now time.Time) (chatdSessionUpdate, []chatdReceivedItem, error) {
+	if node.Tag == "xmlstreamend" {
+		return update, nil, newChatdError("server closed xml stream")
+	}
+	if isChatdTerminalNode(node) {
+		return update, nil, newChatdError("server sent %s", controlNodeSummary(node))
+	}
+	if ack, ok := buildAckForNode(node); ok {
+		if err := s.transport.sendNode(ack); err != nil {
+			return update, nil, chatdPhase("chatd ack write", err)
+		}
+	}
+	if nextRouting := routingInfoFromNode(node); nextRouting != "" {
+		update.RoutingInfo = nextRouting
+	}
+	update.ContactHints = dedupeWAContactHints(append(update.ContactHints, contactHintsFromChatdNode(node)...))
+	update.PrivacyTokens = dedupePrivacyTokenUpdates(append(update.PrivacyTokens, privacyTokenUpdatesFromChatdNode(node)...))
+	if input.MessageSessionID == "" {
+		return update, nil, nil
+	}
+	encs := iterEncPayloads(node)
+	if len(encs) == 0 {
+		if node.Tag != "message" {
+			return update, nil, nil
+		}
+		contact := firstNonEmpty(node.Attrs["from"], node.Attrs["participant"])
+		sender := firstNonEmpty(node.Attrs["participant"], node.Attrs["from"])
+		payloadSummary := nodePayloadSummary(node)
+		message := &waappv1.InboundMessage{MessageId: inboundMessageID(input.WAAccountID, node.Attrs["id"], node.Tag, sender, payloadSummary), MessageSessionId: input.MessageSessionID, Kind: inboundKind(node.Tag), EncryptionState: waappv1.MessageEncryptionState_MESSAGE_ENCRYPTION_STATE_PLAINTEXT, AckStatus: ackStatusForNode(node), ContactRef: contact, SenderRef: sender, PayloadRef: "node:" + redacted(payloadSummary), ProviderMessageId: node.Attrs["id"], ProviderTimestamp: chatdProviderTimestamp(node.Attrs["t"]), DeleteStatus: waappv1.MessageDeleteStatus_MESSAGE_DELETE_STATUS_NOT_DELETED, ReceivedAt: timestamppb.New(now)}
+		return update, []chatdReceivedItem{{message: message}}, nil
+	}
+	items := make([]chatdReceivedItem, 0, len(encs))
+	for _, enc := range encs {
+		payload := enc
+		payloadRef := payloadRefForEnc(input.WAAccountID, payload.Payload)
+		message := &waappv1.InboundMessage{MessageId: inboundMessageID(input.WAAccountID, payload.StanzaID, node.Tag, payload.Sender, payload.Path+":"+hexKey(payload.Payload)), MessageSessionId: input.MessageSessionID, Kind: inboundKind(node.Tag), EncryptionState: waappv1.MessageEncryptionState_MESSAGE_ENCRYPTION_STATE_ENCRYPTED, AckStatus: ackStatusForNode(node), ContactRef: payload.Contact, SenderRef: payload.Sender, PayloadRef: payloadRef, ProviderMessageId: payload.StanzaID, ProviderTimestamp: chatdProviderTimestamp(payload.StanzaTimestamp), DeleteStatus: waappv1.MessageDeleteStatus_MESSAGE_DELETE_STATUS_NOT_DELETED, ReceivedAt: timestamppb.New(now)}
+		items = append(items, chatdReceivedItem{message: message, payload: &payload})
+	}
+	return update, items, nil
+}
+
+func appendReceivedItems(dst []chatdReceivedItem, src []chatdReceivedItem, limit int) []chatdReceivedItem {
+	if limit <= 0 {
+		return append(dst, src...)
+	}
+	for _, item := range src {
+		if len(dst) >= limit {
+			return dst
+		}
+		dst = append(dst, item)
+	}
+	return dst
+}
+
+func splitReceivedItems(items []chatdReceivedItem) ([]*waappv1.InboundMessage, []chatdEncPayload) {
+	messages := make([]*waappv1.InboundMessage, 0, len(items))
+	payloads := []chatdEncPayload{}
+	for _, item := range items {
+		if item.message == nil {
+			continue
+		}
+		messages = append(messages, item.message)
+		if item.payload != nil {
+			payloads = append(payloads, *item.payload)
+		}
+	}
+	return messages, payloads
 }
 
 func chatdProviderTimestamp(value string) *timestamppb.Timestamp {
@@ -330,6 +416,13 @@ func ensureChatStatic(key nativeCurveKeyPair) nativeCurveKeyPair {
 		return key
 	}
 	return newKey
+}
+
+func minTime(left time.Time, right time.Time) time.Time {
+	if right.IsZero() || left.Before(right) {
+		return left
+	}
+	return right
 }
 
 func minDuration(left time.Duration, right time.Duration) time.Duration {
@@ -432,7 +525,7 @@ func (c *chatdClient) dialHTTPConnect(ctx context.Context, parsed *url.URL, targ
 		}
 		conn = tlsConn
 	}
-	_ = conn.SetDeadline(time.Now().Add(c.cfg.Timeout))
+	_ = conn.SetDeadline(time.Now().Add(c.openTimeout()))
 	headers := []string{"CONNECT " + target + " HTTP/1.1", "Host: " + target, "Proxy-Connection: keep-alive", "User-Agent: WhatsApp-GoChatd/1"}
 	if parsed.User != nil {
 		password, _ := parsed.User.Password()
@@ -475,7 +568,7 @@ func (c *chatdClient) dialSOCKS5(ctx context.Context, parsed *url.URL, endpoint 
 	if err != nil {
 		return nil, err
 	}
-	_ = conn.SetDeadline(time.Now().Add(c.cfg.Timeout))
+	_ = conn.SetDeadline(time.Now().Add(c.openTimeout()))
 	methods := []byte{0x00}
 	if parsed.User != nil {
 		methods = append(methods, 0x02)
@@ -560,7 +653,7 @@ func (c *chatdClient) dialSOCKS5(ctx context.Context, parsed *url.URL, endpoint 
 }
 
 func (c *chatdClient) netDialer() net.Dialer {
-	return net.Dialer{Timeout: c.cfg.Timeout, KeepAlive: defaultChatdKeepAlive}
+	return net.Dialer{Timeout: c.openTimeout(), KeepAlive: defaultChatdKeepAlive}
 }
 
 type bufferedConn struct {

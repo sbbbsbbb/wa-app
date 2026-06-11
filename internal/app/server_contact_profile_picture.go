@@ -31,6 +31,24 @@ type contactProfilePictureCacheEntry struct {
 	Data             []byte `json:"data"`
 }
 
+func (s *Server) contactProfilePictureRunner(ctx context.Context, loginState *waappv1.LoginState) (ProtocolEngine, func(), error) {
+	if s != nil && s.longConnections != nil {
+		if runner := s.longConnections.Runner(loginState); runner != nil {
+			if _, ok := runner.(waContactProfilePictureResolver); ok {
+				return runner, func() {}, nil
+			}
+		}
+	}
+	return s.contactResolverRunner(ctx, &waappv1.RequestContext{})
+}
+
+func contactProfilePictureRemoteTimeout(runner ProtocolEngine) time.Duration {
+	if _, ok := runner.(*longConnectionNativeEngine); ok {
+		return longConnectionWaitTimeout + defaultContactProfilePictureTimeout
+	}
+	return defaultContactProfilePictureTimeout
+}
+
 func (s *Server) GetAccountProfilePicture(ctx context.Context, req *waappv1.GetAccountProfilePictureRequest) (*waappv1.GetAccountProfilePictureResponse, error) {
 	if err := validateContext(req.GetContext()); err != nil {
 		return &waappv1.GetAccountProfilePictureResponse{Error: ToProtoError(err)}, nil
@@ -66,7 +84,7 @@ func (s *Server) getWAAccountProfilePicture(ctx context.Context, selector *waapp
 	if pnJID == "" {
 		return WAContactProfilePicture{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_VALIDATION_FAILED, "WA account phone is required", false)
 	}
-	runner, release, err := s.contactResolverRunner(ctx, &waappv1.RequestContext{})
+	runner, release, err := s.contactProfilePictureRunner(ctx, loginState)
 	if err != nil {
 		return WAContactProfilePicture{}, err
 	}
@@ -75,16 +93,20 @@ func (s *Server) getWAAccountProfilePicture(ctx context.Context, selector *waapp
 	if !ok {
 		return WAContactProfilePicture{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_UNSUPPORTED_OPERATION, "WA account profile picture resolver is not configured", false)
 	}
+	remoteTimeout := contactProfilePictureRemoteTimeout(runner)
 	result := resolver.ResolveContactProfilePicture(ctx, EngineContactProfilePictureInput{
 		WAAccountID:          loginState.GetWaAccountId(),
 		ClientProfileID:      loginState.GetClientProfileId(),
 		RegisteredIdentityID: loginState.GetRegisteredIdentityId(),
+		AppVersion:           s.loginStateAppVersion(ctx, loginState),
 		ContactJID:           pnJID,
 		ContactPNJID:         pnJID,
-		RemoteTimeout:        defaultContactProfilePictureTimeout,
+		RemoteTimeout:        remoteTimeout,
 	})
 	if result.Err != nil {
-		s.cacheWAProfilePictureFailure(ctx, accountCacheKey)
+		if shouldCacheProfilePictureFailure(result.Err) {
+			s.cacheWAProfilePictureFailure(ctx, accountCacheKey)
+		}
 		logWAProfilePictureError("account", result.Err)
 		return WAContactProfilePicture{}, result.Err
 	}
@@ -113,7 +135,7 @@ func (s *Server) GetWAContactProfilePicture(ctx context.Context, contactID strin
 	if err != nil {
 		return WAContactProfilePicture{}, err
 	}
-	runner, release, err := s.contactResolverRunner(ctx, &waappv1.RequestContext{})
+	runner, release, err := s.contactProfilePictureRunner(ctx, loginState)
 	if err != nil {
 		return WAContactProfilePicture{}, err
 	}
@@ -122,17 +144,21 @@ func (s *Server) GetWAContactProfilePicture(ctx context.Context, contactID strin
 	if !ok {
 		return WAContactProfilePicture{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_UNSUPPORTED_OPERATION, "WA contact profile picture resolver is not configured", false)
 	}
+	remoteTimeout := contactProfilePictureRemoteTimeout(runner)
 	result := resolver.ResolveContactProfilePicture(ctx, EngineContactProfilePictureInput{
 		WAAccountID:          contact.GetWaAccountId(),
 		ClientProfileID:      loginState.GetClientProfileId(),
 		RegisteredIdentityID: loginState.GetRegisteredIdentityId(),
+		AppVersion:           s.loginStateAppVersion(ctx, loginState),
 		ContactJID:           contact.GetJid(),
-		ContactPNJID:         normalizeWAJID(contact.GetNumber()),
+		ContactPNJID:         phoneNumberWAJID(contact.GetNumber()),
 		ContactPictureID:     contact.GetProfilePictureId(),
-		RemoteTimeout:        defaultContactProfilePictureTimeout,
+		RemoteTimeout:        remoteTimeout,
 	})
 	if result.Err != nil {
-		s.cacheWAProfilePictureFailure(ctx, contactCacheKey)
+		if shouldCacheProfilePictureFailure(result.Err) {
+			s.cacheWAProfilePictureFailure(ctx, contactCacheKey)
+		}
 		logWAProfilePictureError("contact", result.Err)
 		return WAContactProfilePicture{}, result.Err
 	}
@@ -217,6 +243,17 @@ func (s *Server) cacheWAProfilePictureFailure(ctx context.Context, key string) {
 
 func profilePictureFailureCacheKey(key string) string {
 	return key + ":failure"
+}
+
+func shouldCacheProfilePictureFailure(err error) bool {
+	var appErr *AppError
+	if !errors.As(err, &appErr) {
+		return false
+	}
+	if appErr == nil {
+		return false
+	}
+	return appErr.Code == waappv1.WaErrorCode_WA_ERROR_CODE_MESSAGE_NOT_FOUND
 }
 
 func (s *Server) deleteWAAccountProfilePictureCache(ctx context.Context, accountID string) {

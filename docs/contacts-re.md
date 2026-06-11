@@ -37,6 +37,28 @@ The minimal UI-safe field set for wa-app is therefore:
 
 Raw Android contact IDs, table names, DB paths, and WA internal sync protocol flags stay internal to extractors and are not exposed through public proto.
 
+## Contact profile pictures
+
+Reverse target: `/Users/pood1e/workspace/wa-eng/app-release-re/app-release.apk`.
+
+Observed app path:
+
+- Individual contacts use `X/C08570aV.java` -> `X/C83N.smali`.
+- The app sends an IQ:
+  - `iq`: `xmlns="w:profile:picture"`, `type="get"`, `to="s.whatsapp.net"`, `target=<contact-jid>`, generated `id`.
+  - `picture`: `type="image"` or `type="preview"`.
+  - `picture@id` is included only when a positive cached photo id is known.
+  - `picture@query="url"` is included for `image`; for `preview` it is only added for the app's FBID-migration targets (`X/C15K.A02`), not for ordinary LID contacts.
+  - When available, profile-privacy enrichment adds `picture@common_gid` and a `picture/tctoken` child (`X/C21760xV.java`, `X/C83D.java`).
+- Success parsing (`X/C83N.BuX`) reads `picture@id`, `picture@url`, `picture@direct_path`, `picture@hash`, and inline picture bytes. `404` and `410` mean no profile picture. Other IQ errors are treated as remote failures.
+- The HTTP download path (`X/GXF.java`) downloads the returned `url` with the app User-Agent and bounded connect/read timeouts; `direct_path`/`hash` are stored as metadata.
+- Group profile pictures are separate: `X/C9A4.java` sends `xmlns="w:g2"` to the group with `picture@query="url"`/`"blob"`.
+
+Implementation note:
+
+- wa-app mirrors the individual-contact request shape, tries the known photo id first, then retries without it so an API caller without local image cache can still fetch bytes after a `304`/unchanged-style response.
+- PN JIDs are derived from normalized phone digits before falling back to the LID JID. This matches the app's contact model more closely than treating a display phone string as a raw JID.
+
 ## App-side filtering worth preserving
 
 The app's WhatsApp-user contact query filters out special JIDs:

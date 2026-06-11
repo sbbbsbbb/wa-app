@@ -100,6 +100,9 @@ Go 原生实现关系：
 ## 7. 当前非编排实现边界
 
 - Go profile 已生成可验证的 Signal/X25519 key bundle：`e_skey_sig` 使用 identity private key 对带 Curve25519 type 前缀的 signed prekey public key 做 XEdDSA 签名，并在写入 state 前自校验。
+- 原生注册 HTTP 参数覆盖实际 App 主干形态：`/v2/exist`、`/v2/code`、`/v2/register` 统一复用稳定 profile/key bundle，发送 code/register 默认设备 map，并保留 SMS、voice、WA old、email OTP、passkey、silent auth、recaptcha 等投递/挑战方式的协议枚举。冷却时间只按 APK 实际 wait 字段解析：`sms_wait`、`voice_wait`、`flash_wait`、`wa_old_wait`、`email_otp_wait`、`send_sms_wait`、`silent_auth_wait` 及 XMPP `*_wait_time`，缺少专属 wait 时才对当前请求方式使用 `retry_after`。
+- `flash` 仅作为 APK 能力记录，不作为当前服务端直发注册方式。逆向确认它是 Flash Call / 未接来电验证：请求阶段返回 CLI 匹配材料，Android 侧通过 Google MissedCallRetriever 或 `PHONE_STATE` 监听来电号码，匹配后再以 `method=flash` 提交；没有 Android 设备侧 missed-call/call-log runtime 时，`/api/wa/register` 和 action gateway 都应快速拒绝 `flash`。
+- WAMSYS 对齐记录见 `docs/registration-wamsys-re.md`。App 侧硬件/反滥用生成的 opaque WAMSYS 字段按逆向确认的字段集、长度、编码和生命周期精准伪造；profile/default map 不承载 `gpia/_gi/_gg/_gp/_ga/aid`，这些字段只能由明确的 WAMSYS material source 注入。运行态 `/v2/exist`、`/v2/code` 使用 Pure-Go precision provider，授权分析场景可通过 `ImportWamsysCapture` / `BuildRegistrationRequest` 显式覆盖。
 - chatd token dictionary 目前使用最小 fallback 表，覆盖当前收消息与 ack 所需节点；如需更完整词表，应迁移为 Go 资源或生成物，而不是运行时读取 `wa-re` 脚本。
 - 跨步骤业务编排不依赖外部编排器；`StartRegistration` 提供本服务原生 HTTP 编排入口，外部自动化如需接入只能调用 wa-app 自有 HTTP/gRPC 原子能力。`BuildRegistrationRequest` 只产出请求材料，不替代 `RequestVerificationCode` / `SubmitVerificationCode` 的业务记录。
 
@@ -111,9 +114,9 @@ Go 原生实现关系：
 
 `CheckLoginState` 由 wa-app 原生服务直接处理。根据 `app-release-re` 中 chatd login payload 的 `passive` / `short_connect` 以及 `last_heartbeat_login`、`wamo_heartbeat` 逆向线索，用原生 chatd 被动短连接握手检测远端登录态。成功刷新 `last_verified_at` 并触发长连接恢复；明确失效置为 `INVALID`；代理/网络不可达只返回 `UNREACHABLE`，不直接吊销本地登录态。
 
-号码探测路径每次生成随机设备指纹但不持久化；配置 `WA_COMMON_PROXY` 时所有 WA 出站链路统一使用该代理，未配置时直连降级。代理始终是可选增强；不做出口 IP、风控、CF 或目标连通性预检，不按 workspace、号码、账号、号码国家或地区直接持有上游代理 lease。
+号码探测路径每次生成随机设备指纹但不持久化；配置 `WA_COMMON_PROXY` 时 WA 出站链路默认使用该代理；`WA_NUMBER_PROBE_PROXY` 可覆盖号码/SMS 探测代理，`WA_REGISTRATION_PROXY` 可覆盖注册与 OTP 提交代理，二者为空时回退到 `WA_COMMON_PROXY`，未配置时直连降级。代理始终是可选增强；不做出口 IP、风控、CF 或目标连通性预检，不按 workspace、号码、账号、号码国家或地区直接持有上游代理 lease。
 
-PG/Redis/proxy 都不是 wa-app 启动必需依赖；PG/Redis 缺省使用 `WA_APP_DATA_DIR` 下的 SQLite durable/runtime，proxy 缺省直连，外部自动化仅能作为调用方存在。
+PG/Redis/proxy 都不是 wa-app 启动必需依赖；PG/Redis 缺省使用 `WA_APP_DATA_DIR`（默认 `/var/lib/wa-app`）下的 SQLite durable/runtime 存储，proxy 缺省直连，外部自动化仅能作为调用方存在。
 
 ## 9. 前端管理边界
 

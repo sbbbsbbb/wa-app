@@ -1,8 +1,13 @@
-import { useMemo } from 'react';
-import type { ReactNode } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, Outlet, useMatches, useNavigate, useOutletContext, useParams } from 'react-router';
-import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
+import { Loader2, Plus } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
+import { Toaster } from '@/components/ui/sonner';
 import type { LongConnectionState } from '../proto/byte/v/forge/waapp/v1/messaging';
 import type { WAAccount } from '../proto/byte/v/forge/waapp/v1/profile';
 import { deleteWaAccount, getWaAccounts, getWaClientProfiles, waAccountID, waKeys } from './wa-api';
@@ -13,31 +18,33 @@ import { WhatsAppIcon } from './wa-brand-icon';
 import { WaInbox } from './wa-inbox';
 import { useWaLongConnectionIndex } from './wa-long-connection-badge';
 import { waChatsPath } from './wa-route-paths';
-import { Button, LoadingText, ToastMessage, useToastMessage } from './ui';
 
-type WaRouteContext = { accounts: WAAccount[]; accountsLoading: boolean; connections: Map<string, LongConnectionState>; deleting: boolean; refreshAccounts: () => Promise<void>; deleteAccount: (account: WAAccount) => void; done: (message: string) => void; error: (message: string) => void };
+type WaRouteContext = { accounts: WAAccount[]; accountsLoading: boolean; connections: Map<string, LongConnectionState>; deleting: boolean; refreshAccounts: () => Promise<void>; refreshAccountAvatars: () => void; deleteAccount: (account: WAAccount) => void; done: (message: string) => void; error: (message: string) => void };
 
 const emptyAccounts: WAAccount[] = [];
+const accountSidebarStyle = { '--sidebar-width': '15rem', '--sidebar-width-icon': '4rem' } as CSSProperties;
 
 export function WaLayout() {
-  const toast = useToastMessage();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const accountsQuery = useQuery({ queryKey: waKeys.accounts(), queryFn: () => getWaAccounts(), refetchInterval: 10000 });
+  const [accountAvatarVersion, setAccountAvatarVersion] = useState(() => String(Date.now()));
+  const [accountRailExpanded, setAccountRailExpanded] = useState(false);
+  const accountsQuery = useInfiniteQuery({ queryKey: waKeys.accounts(), queryFn: ({ pageParam }) => getWaAccounts(pageParam), initialPageParam: '', getNextPageParam: (lastPage) => lastPage.next_cursor || undefined, refetchInterval: 10000 });
   const connections = useWaLongConnectionIndex();
-  const accounts = accountsQuery.data?.accounts || emptyAccounts;
+  const accounts = useMemo(() => accountsQuery.data?.pages.flatMap((page) => page.accounts || []) || emptyAccounts, [accountsQuery.data]);
   const selectedID = useSelectedAccountID(accounts);
-  const deletion = useMutation({ mutationFn: deleteWaAccount, onSuccess: async () => { toast.showOK('账号已删除'); await refreshAccounts(); navigate('/', { replace: true }); }, onError: toast.showError });
+  const deletion = useMutation({ mutationFn: deleteWaAccount, onSuccess: async () => { toast.success('账号已删除'); await refreshAccounts(); navigate('/', { replace: true }); }, onError: showErrorToast });
   async function refreshAccounts() {
     await queryClient.invalidateQueries({ queryKey: waKeys.accounts() });
   }
-  const context: WaRouteContext = { accounts, accountsLoading: accountsQuery.isLoading, connections: connections.byAccount, deleting: deletion.isPending, refreshAccounts, deleteAccount: deletion.mutate, done: toast.showOK, error: toast.showError };
+  const refreshAccountAvatars = () => setAccountAvatarVersion(String(Date.now()));
+  const context: WaRouteContext = { accounts, accountsLoading: accountsQuery.isLoading, connections: connections.byAccount, deleting: deletion.isPending, refreshAccounts, refreshAccountAvatars, deleteAccount: deletion.mutate, done: toast.success, error: showErrorToast };
   return (
-    <div className="grid h-dvh grid-cols-[68px_minmax(0,1fr)] overflow-hidden bg-background text-foreground">
-      <WaAccountRail accounts={accounts} selectedID={selectedID} connections={connections.byAccount} loading={accountsQuery.isLoading} connectionsLoading={connections.loading} />
-      <Outlet context={context} />
-      <ToastMessage toast={toast.toast} />
-    </div>
+    <SidebarProvider open={accountRailExpanded} onOpenChange={setAccountRailExpanded} style={accountSidebarStyle} className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
+      <WaAccountRail accounts={accounts} selectedID={selectedID} avatarVersion={accountAvatarVersion} connections={connections.byAccount} loading={accountsQuery.isLoading} connectionsLoading={connections.loading} hasNextPage={Boolean(accountsQuery.hasNextPage)} loadingMore={accountsQuery.isFetchingNextPage} onLoadMore={() => { void accountsQuery.fetchNextPage(); }} />
+      <SidebarInset className="h-dvh min-w-0 overflow-hidden"><Outlet context={context} /></SidebarInset>
+      <Toaster richColors closeButton />
+    </SidebarProvider>
   );
 }
 
@@ -49,19 +56,18 @@ export function WaHomeRoute() {
 }
 
 export function WaCreateAccountRoute() {
-  const navigate = useNavigate();
   const { deleting, refreshAccounts, done, error } = useWaContext();
-  return <PageShell title="添加账号"><WaAccountAdd disabled={deleting} onCreated={async () => { done('注册流程已发起'); await refreshAccounts(); navigate('/', { replace: true }); }} onError={error} /></PageShell>;
+  return <PageShell title="添加账号"><WaAccountAdd disabled={deleting} onChanged={refreshAccounts} onDone={done} onError={error} /></PageShell>;
 }
 
 export function WaAccountInfoRoute() {
   const account = useRouteAccount();
-  const { accounts, accountsLoading, deleting, deleteAccount, done, error } = useWaContext();
+  const { accounts, accountsLoading, deleting, deleteAccount, done, error, refreshAccounts, refreshAccountAvatars } = useWaContext();
   const accountID = waAccountID(account);
   const profilesQuery = useQuery({ queryKey: waKeys.profiles(accountID), queryFn: () => getWaClientProfiles(accountID), enabled: Boolean(accountID), refetchInterval: 30000 });
   if (accountsLoading) return <PageCenter><LoadingText>加载账号...</LoadingText></PageCenter>;
   if (!account) return <AccountFallback accounts={accounts} />;
-  return <WaAccountInfoPage account={account} profiles={profilesQuery.data?.client_profiles || []} profilesLoading={profilesQuery.isLoading} busy={deleting} onDelete={deleteAccount} onDone={done} onError={error} />;
+  return <WaAccountInfoPage account={account} profiles={profilesQuery.data?.client_profiles || []} profilesLoading={profilesQuery.isLoading} busy={deleting} onDelete={deleteAccount} onDone={done} onError={error} onAccountChanged={() => { void refreshAccounts(); }} onAvatarChanged={refreshAccountAvatars} />;
 }
 
 export function WaInboxRoute() {
@@ -95,7 +101,18 @@ function AccountFallback({ accounts }: { accounts: WAAccount[] }) {
 
 function NoAccount() {
   const navigate = useNavigate();
-  return <PageCenter><div className="grid max-w-xs gap-3 text-center"><WhatsAppIcon className="mx-auto size-12" /><div><p className="font-semibold">还没有账号</p><p className="mt-1 text-sm text-muted-foreground">添加账号后即可查看联系人和消息。</p></div><Button onClick={() => navigate('/accounts/new')}><Plus size={16} />添加账号</Button></div></PageCenter>;
+  return (
+    <PageCenter>
+      <Empty className="max-w-sm border-0">
+        <EmptyHeader>
+          <EmptyMedia><WhatsAppIcon className="size-12" /></EmptyMedia>
+          <EmptyTitle>还没有账号</EmptyTitle>
+          <EmptyDescription>添加账号后即可查看联系人和消息。</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent><Button onClick={() => navigate('/accounts/new')}><Plus size={16} />添加账号</Button></EmptyContent>
+      </Empty>
+    </PageCenter>
+  );
 }
 
 function PageShell({ title, children }: { title: string; children: ReactNode }) {
@@ -104,6 +121,14 @@ function PageShell({ title, children }: { title: string; children: ReactNode }) 
 
 function PageCenter({ children }: { children: ReactNode }) {
   return <section className="grid h-dvh place-items-center bg-background p-8">{children}</section>;
+}
+
+function LoadingText({ children }: { children: ReactNode }) {
+  return <span className="inline-flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{children}</span>;
+}
+
+function showErrorToast(error: unknown) {
+  toast.error(error instanceof Error ? error.message : String(error));
 }
 
 export function WaNotFoundRoute() {

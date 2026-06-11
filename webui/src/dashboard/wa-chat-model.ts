@@ -62,14 +62,15 @@ export function buildWaContacts(events: WaChatEvent[], records: WAContactRecord[
 }
 
 export function toAssistantMessage(event: WaChatEvent): ThreadMessageLike {
-  return {
+  const role = event.outgoing ? 'user' : 'assistant';
+  const message: ThreadMessageLike = {
     id: event.id,
-    role: event.outgoing ? 'user' : 'assistant',
+    role,
     content: event.text,
     createdAt: event.at,
-    status: { type: 'complete', reason: 'stop' },
     metadata: { custom: { source: event.source, sender: event.sender, copyText: event.copyText, outgoing: event.outgoing, displayText: event.text, read: event.read, canMarkRead: event.canMarkRead, readAt: event.readAt } satisfies WaChatMeta },
   };
+  return role === 'assistant' ? { ...message, status: { type: 'complete', reason: 'stop' } } : message;
 }
 
 export function formatChatTime(value?: Date) {
@@ -123,7 +124,7 @@ function contactProfilePictureURL(record: WAContactRecord) {
 
 function recordTitle(record: WAContactRecord) {
   const name = firstContactName(record);
-  if (record.kind === WAContactKind.WA_CONTACT_KIND_BUSINESS) return name && !isPhoneFallbackName(name) ? name : '企业联系人';
+  if (record.kind === WAContactKind.WA_CONTACT_KIND_BUSINESS) return name || '企业联系人';
   return name || phoneTitle(record.number) || sourcePartyLabel(record.jid) || '未知联系人';
 }
 
@@ -145,6 +146,7 @@ function isKnownChatEvent(event: WaChatEvent) {
 }
 
 function messageSourceLabel(item: AccountMessage) {
+  if (item.source === AccountMessageSource.ACCOUNT_MESSAGE_SOURCE_LOCAL_SEND) return '已发送';
   if (item.source === AccountMessageSource.ACCOUNT_MESSAGE_SOURCE_IMPORTED_HISTORY) return '导入历史';
   if (item.encryption_state === MessageEncryptionState.MESSAGE_ENCRYPTION_STATE_DECRYPTION_FAILED) return '解密失败';
   if (item.encryption_state === MessageEncryptionState.MESSAGE_ENCRYPTION_STATE_ENCRYPTED) return '待解密';
@@ -159,7 +161,7 @@ function messageStateLabel(state?: MessageEncryptionState) {
 
 function safeContactName(value?: string) {
   const name = (value || '').trim();
-  if (!name || name === '未知联系人' || name.startsWith('LID ') || name.startsWith('企业账号 ')) return '';
+  if (!name || name === '0' || name === '未知联系人' || name.startsWith('LID ') || name.startsWith('企业账号 ') || isPhoneFallbackName(name)) return '';
   return name;
 }
 

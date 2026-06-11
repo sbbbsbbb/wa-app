@@ -91,7 +91,7 @@ func (s *Server) probeNumberSMSAttempt(ctx context.Context, payload map[string]a
 		"fingerprint_persistence": "RANDOM_NOT_COMMITTED",
 		"fingerprint":             fingerprintSummary(phoneProfileToProto(phone, state.Profile)),
 	}
-	probeResult := probeEngine.probeAccountWithState(ctx, EngineRegistrationInput{Phone: phone}, state)
+	probeResult := probeEngine.probeAccountWithState(ctx, EngineRegistrationInput{AppVersion: defaultWAAppVersion, Phone: phone}, state)
 	account := probeResultMap(probeResult)
 	sms := smsProbeMap(account)
 	result := buildNumberProbeResult(payload, proxy, fingerprint, account, sms)
@@ -122,6 +122,16 @@ func (s *Server) numberProbeProxy(ctx context.Context, payload map[string]any, c
 	if proxyURL, route, countryCode := sharedNumberProbeProxy(payload); proxyURL != "" {
 		proxy := map[string]any{"success": true, "accepted": true, "proxy_mode": "SHARED_DYNAMIC_IP", "country_code": firstNonEmpty(countryCode, "UNKNOWN"), "account_id": route.AccountID, "route_id": route.RouteID}
 		return route, proxyURL, proxy, func() {}, nil
+	}
+	if s != nil && strings.TrimSpace(s.numberProbeProxyURL) != "" {
+		proxyURL := strings.TrimSpace(s.numberProbeProxyURL)
+		route := staticProxyRoute("number-probe", proxyURL, staticNumberProbeProxyMode)
+		return route, proxyURL, staticProxyResult(staticNumberProbeProxyMode), func() {}, nil
+	}
+	if s != nil && strings.TrimSpace(s.commonProxyURL) != "" {
+		proxyURL := strings.TrimSpace(s.commonProxyURL)
+		route := staticProxyRoute("common", proxyURL, staticCommonProxyMode)
+		return route, proxyURL, staticProxyResult(staticCommonProxyMode), func() {}, nil
 	}
 	if s == nil || s.proxyRuntime == nil {
 		proxy := map[string]any{"success": true, "accepted": true, "proxy_mode": "DIRECT", "country_code": "LOCAL"}
@@ -172,9 +182,12 @@ func buildNumberProbeResult(input map[string]any, proxy map[string]any, fingerpr
 	smsWaitSeconds := firstNumberValue(sms, "sms_wait_seconds", "wait_seconds", "retry_after_seconds", "cooldown_seconds", "remaining_seconds", "retry_after", "wait")
 	smsWaitUntil := firstNonEmpty(textField(sms, "sms_wait_until"), textField(sms, "wait_until"), textField(sms, "retry_after_at"), textField(sms, "cooldown_until"))
 	proxyAccepted := boolField(proxy, "accepted")
+	if accountFlow == accountProbeFlowUnknown {
+		accountFlow = accountFlowFromRawReason(accountRawReason)
+	}
 	requestFailed := !proxyAccepted || accountProbeRequestFailed(accountFlow, accountStatus, accountRawStatus, accountRawReason, accountError)
 	requestSucceeded := !requestFailed
-	if requestFailed {
+	if requestFailed && !terminalAccountFlow(accountFlow) {
 		accountFlow = accountProbeFlowProbeFailed
 	}
 	canRegister := canRegisterValue(requestSucceeded, accountReachable, smsAvailable, blocked, accountFlow)
@@ -215,6 +228,29 @@ func buildNumberProbeResult(input map[string]any, proxy map[string]any, fingerpr
 	}
 }
 
+func accountFlowFromRawReason(reason string) string {
+	normalized := strings.ToLower(strings.TrimSpace(reason))
+	switch {
+	case existInvalidNumberReason(normalized):
+		return accountProbeFlowInvalidNumber
+	case existRateLimitedReason(normalized):
+		return accountProbeFlowRateLimited
+	case normalized == "blocked":
+		return accountProbeFlowBlocked
+	default:
+		return accountProbeFlowUnknown
+	}
+}
+
+func terminalAccountFlow(flow string) bool {
+	switch flow {
+	case accountProbeFlowInvalidNumber, accountProbeFlowRateLimited, accountProbeFlowBlocked:
+		return true
+	default:
+		return false
+	}
+}
+
 func accountProbeRequestFailed(accountFlow string, accountStatus string, accountRawStatus string, accountRawReason string, accountError string) bool {
 	if strings.TrimSpace(accountError) != "" {
 		return true
@@ -237,8 +273,15 @@ func numberProbeFailureReason(proxyAccepted bool, accountStatus string, accountR
 	if strings.TrimSpace(accountError) != "" {
 		return "account probe request failed: " + accountError
 	}
+	rawReason := strings.ToLower(strings.TrimSpace(accountRawReason))
+	if existInvalidNumberReason(rawReason) {
+		return "phone format is invalid: " + rawReason
+	}
+	if existRateLimitedReason(rawReason) {
+		return "verification request is cooling down: " + rawReason
+	}
 	if accountStatus == "ACCOUNT_PROBE_STATUS_REJECTED" {
-		return "account probe request rejected"
+		return "account probe request rejected: " + firstNonEmpty(accountRawReason, accountRawStatus, "UNKNOWN")
 	}
 	return "account probe request failed: " + firstNonEmpty(accountRawReason, accountRawStatus, accountStatus, "UNKNOWN")
 }
@@ -517,6 +560,23 @@ func methodStatusMaps(statuses []VerificationMethodStatus) []map[string]any {
 			"delivery_method":  status.Method.String(),
 			"available":        status.Available,
 			"cooldown_seconds": status.CooldownSeconds,
+		})
+	}
+	return out
+}
+
+func protoMethodStatusMaps(statuses []*waappv1.VerificationMethodStatus) []map[string]any {
+	out := make([]map[string]any, 0, len(statuses))
+	for _, status := range statuses {
+		if status.GetDeliveryMethod() == waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_UNSPECIFIED {
+			continue
+		}
+		method := registrationMethodName(status.GetDeliveryMethod(), "")
+		out = append(out, map[string]any{
+			"method":           method,
+			"delivery_method":  status.GetDeliveryMethod().String(),
+			"available":        status.GetAvailable(),
+			"cooldown_seconds": durationSeconds(status.GetCooldown()),
 		})
 	}
 	return out

@@ -18,6 +18,7 @@ func (s *SQLiteStore) SaveWAContacts(ctx context.Context, contacts []*waappv1.WA
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, contact := range contacts {
+		contact = normalizedWAContactForStorage(contact)
 		if contact == nil || contact.GetContactId() == "" || contact.GetWaAccountId() == "" {
 			continue
 		}
@@ -33,6 +34,9 @@ ON CONFLICT(id) DO UPDATE SET
     WHEN COALESCE(json_extract(wa_sqlite_contacts.payload, '$.display_name'), '') IN ('', '未知联系人') THEN excluded.payload
     WHEN COALESCE(json_extract(wa_sqlite_contacts.payload, '$.display_name'), '') LIKE '联系人 %' THEN excluded.payload
     WHEN COALESCE(json_extract(wa_sqlite_contacts.payload, '$.display_name'), '') LIKE 'LID %' THEN excluded.payload
+    WHEN COALESCE(json_extract(wa_sqlite_contacts.payload, '$.display_name'), '') = '0' THEN excluded.payload
+    WHEN length(ltrim(COALESCE(json_extract(wa_sqlite_contacts.payload, '$.display_name'), ''), '+')) >= 6
+      AND ltrim(COALESCE(json_extract(wa_sqlite_contacts.payload, '$.display_name'), ''), '+') NOT GLOB '*[^0-9]*' THEN excluded.payload
     WHEN COALESCE(NULLIF(json_extract(wa_sqlite_contacts.payload, '$.number'), ''), NULLIF(json_extract(excluded.payload, '$.number'), ''), '') <> ''
       AND COALESCE(json_extract(wa_sqlite_contacts.payload, '$.display_name'), '') = '+' || COALESCE(NULLIF(json_extract(wa_sqlite_contacts.payload, '$.number'), ''), NULLIF(json_extract(excluded.payload, '$.number'), ''), '') THEN excluded.payload
     ELSE wa_sqlite_contacts.payload
@@ -187,7 +191,7 @@ func (s *SQLiteStore) enrichWAContactMessageStats(ctx context.Context, waAccount
 	var unreadCount int32
 	var lastMessageAt int64
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),
-  COALESCE(SUM(CASE WHEN json_extract(m.payload, '$.read_at') IS NULL THEN 1 ELSE 0 END), 0),
+  COALESCE(SUM(CASE WHEN json_extract(m.payload, '$.read_at') IS NULL AND COALESCE(json_extract(m.payload, '$.direction'), 'ACCOUNT_MESSAGE_DIRECTION_INBOUND')='ACCOUNT_MESSAGE_DIRECTION_INBOUND' THEN 1 ELSE 0 END), 0),
   COALESCE(MAX(m.received_at), 0)
 FROM wa_sqlite_inbound_messages m
 JOIN wa_sqlite_message_sessions s ON s.id=m.message_session_id

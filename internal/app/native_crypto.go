@@ -179,6 +179,20 @@ func aesCBCPKCS7Decrypt(ciphertext []byte, key []byte, iv []byte) ([]byte, error
 	return plain[:len(plain)-padLen], nil
 }
 
+func aesCBCPKCS7Encrypt(plaintext []byte, key []byte, iv []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	if len(iv) != aes.BlockSize {
+		return nil, fmt.Errorf("invalid AES-CBC IV length %d", len(iv))
+	}
+	padded := pkcs7Pad(plaintext, aes.BlockSize)
+	ciphertext := make([]byte, len(padded))
+	cipher.NewCBCEncrypter(block, iv).CryptBlocks(ciphertext, padded)
+	return ciphertext, nil
+}
+
 func nativeNonce(counter uint64) []byte {
 	out := make([]byte, 12)
 	binary.BigEndian.PutUint64(out[4:], counter)

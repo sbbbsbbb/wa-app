@@ -1,35 +1,66 @@
 # wa-app
 
-`wa-app` 是 WA 应用链路的应用层服务，把账号、注册、登录态、消息会话和协议工具能力封装为 Go 原生原子 RPC 与 dashboard 能力。
+`wa-app` 是 WA 应用链路服务，提供账号管理、号码探测、注册、登录态检查、长连接会话和消息处理能力，并内置管理 dashboard。
 
 > [!CAUTION]
 > 使用本项目即表示你同意 [NOTICE](./NOTICE) 的全部条款。本项目仅限协议建模、教学演示、授权安全研究和内部非商业验证；禁止用于商业用途、未授权目标或违反第三方服务条款的场景。
 
-## 核心能力
+## 功能
 
-- 管理 WAAccount、客户端 profile、注册记录、登录态投影和消息元数据。
-- 提供号码探测、验证码请求/提交、登录态检测、长连接会话、消息接收与 ack 等原子能力。
-- 从消息中提取 OTP/Flag 候选值，并按敏感数据规则保存引用或脱敏投影。
-- 提供 detached tooling，用于协议材料建模、请求材料构造和已验证参考资产导入。
-- 自带 WA 管理 dashboard，覆盖账号管理、号码探测、注册动作和连接状态观察。
+- 账号管理：维护 WAAccount、客户端 profile、注册记录和登录态投影。
+- 号码与注册：支持号码探测、SMS 探测、注册请求、OTP 提交和登录态检查。
+- 连接与消息：支持长连接会话、消息接收、消息 ack、1:1 文本消息发送和会话查看。
+- 数据提取：从消息中提取 OTP/Flag 候选值，并按敏感数据规则保存引用或脱敏投影。
+- 管理界面：提供 dashboard，用于账号、联系人、消息、连接状态和账号资料操作。
 
-## 使用方式
+## 部署方式
 
-业务侧通过 proto/gRPC 或 dashboard HTTP 边界调用 `wa-app-service`。长期事实优先进入 PG；短期运行态、锁和幂等窗口优先进入 Redis；未配置 PG/Redis 时降级到本服务 SQLite。`wa-re` 与 `app-release-re` 仅作为参考材料，不作为运行时桥接脚本。
-
-## 入口
-
-- 服务入口：`cmd/wa-app-service/`
-- 契约真源：`proto/byte/v/forge/waapp/v1/`
-- 应用实现：`internal/app/`
-- 数据迁移：`migrations/`
-- 前端模块：`webui/`
-- 建模说明：`docs/modeling.md`
-
-## 常用检查
+推荐使用本仓库提供的 Docker Compose 启动服务：
 
 ```sh
-scripts/generate-proto.sh
-(cd webui && npm run proto)
-git diff --check
+cp .env.example .env
+docker compose pull
+docker compose up -d
 ```
+
+如果你只是本地快速启动，也可以直接 `docker compose up -d`（不创建 `.env` 也能启动，未配置值使用 compose 默认值）。
+
+默认端口（固定）：
+
+- Dashboard：`http://127.0.0.1:8080`（`docker-compose.yml` 映射）
+- gRPC：`127.0.0.1:50091`
+
+若你确实要改主机映射端口，请直接改 `docker-compose.yml` 的 `ports` 行（非配置项）。
+
+### 配置
+
+`.env` 中保留少量运行必需配置：
+
+- `WA_APP_IMAGE_TAG`：镜像标签，生产建议使用固定版本。
+- `WA_APP_AUTH_PASSWORD`：可选 dashboard 单密码登录；为空则关闭鉴权。
+- `WA_APP_DATA_DIR`：容器内持久化目录；默认 `/var/lib/wa-app`。
+- `WA_APP_PG_DSN`：可选 PostgreSQL DSN；为空时使用内置 SQLite 持久化。
+- `WA_APP_REDIS_URL`：可选 Redis URL；为空时使用内置 SQLite 运行态存储。
+- `WA_COMMON_PROXY`：可选默认 WA 出站代理；为空则直连。
+- `WA_NUMBER_PROBE_PROXY`：可选号码/SMS 探测代理；为空时使用 `WA_COMMON_PROXY`，`WA_COMMON_PROXY` 也为空则直连。
+- `WA_REGISTRATION_PROXY`：可选注册与 OTP 提交代理；为空时使用 `WA_COMMON_PROXY`，`WA_COMMON_PROXY` 也为空则直连。
+
+PostgreSQL 和 Redis 都是可选组件。需要启用时，在 `docker-compose.yml` 中取消对应服务注释，并在 `.env` 中填写 `WA_APP_PG_DSN` / `WA_APP_REDIS_URL`。
+
+### 源码构建镜像
+
+`Dockerfile` 支持在 `wa-app` 仓库内直接构建，不依赖 `common-lib` 构建上下文：
+
+```sh
+docker build -t wa-app-service:local .
+```
+
+在 `byte-v-forge` 聚合目录构建也可用：
+
+```sh
+docker build -f wa-app/Dockerfile -t wa-app-service:local .
+```
+
+## 友情链接
+
+- [LINUX DO - 新的理想型社区](https://linux.do/)

@@ -26,6 +26,9 @@ type Server struct {
 	ids     IDGenerator
 
 	proxyRuntime                 *DynamicProxyRuntime
+	commonProxyURL               string
+	numberProbeProxyURL          string
+	registrationProxyURL         string
 	longProxyUsername            string
 	numberProbeProxyUsername     string
 	registrationProxyUsername    string
@@ -48,6 +51,12 @@ func NewServer(store Store, runtime RuntimeState, runner ProtocolEngine, clock C
 
 func (s *Server) SetDynamicProxyRuntime(proxyRuntime *DynamicProxyRuntime) {
 	s.proxyRuntime = proxyRuntime
+}
+
+func (s *Server) SetStaticProxyURLs(common string, numberProbe string, registration string) {
+	s.commonProxyURL = strings.TrimSpace(common)
+	s.numberProbeProxyURL = strings.TrimSpace(numberProbe)
+	s.registrationProxyURL = strings.TrimSpace(registration)
 }
 
 func (s *Server) SetGatewayProxyUsernames(longConnection string, numberProbe string, registration string, accountSettings string, loginStateCheck string) {
@@ -92,7 +101,7 @@ func (s *Server) RecordProtocolProfile(ctx context.Context, req *waappv1.RecordP
 		ProtocolProfileId: s.ids.NewID("waproto_"),
 		AppArtifactId:     req.GetAppArtifactId(),
 		DisplayName:       firstNonEmpty(req.GetDisplayName(), "WA protocol profile"),
-		AppVersion:        req.GetAppVersion(),
+		AppVersion:        nativeAppVersion(req.GetAppVersion()),
 		Status:            waappv1.ProtocolProfileStatus_PROTOCOL_PROFILE_STATUS_ACTIVE,
 		Capabilities:      req.GetCapabilities(),
 		RegistrationFlows: req.GetRegistrationFlows(),
@@ -129,7 +138,7 @@ func (s *Server) CreateWAAccount(ctx context.Context, req *waappv1.CreateWAAccou
 		return &waappv1.CreateWAAccountResponse{Account: existing}, nil
 	}
 	now := s.clock.Now()
-	account := newWAAccount(s.ids.NewID("waacc_"), phone, waappv1.WAAccountStatus_WA_ACCOUNT_STATUS_PENDING_REGISTRATION, &waappv1.AuditStamp{CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now)})
+	account := newWAAccount(s.ids.NewID("waacc_"), "", phone, waappv1.WAAccountStatus_WA_ACCOUNT_STATUS_PENDING_REGISTRATION, &waappv1.AuditStamp{CreatedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now)})
 	account, err := s.saveWAAccount(ctx, account)
 	if err != nil {
 		return &waappv1.CreateWAAccountResponse{Error: ToProtoError(err)}, nil
@@ -193,7 +202,8 @@ func (s *Server) PrepareClientProfile(ctx context.Context, req *waappv1.PrepareC
 	if err != nil {
 		return &waappv1.PrepareClientProfileResponse{Error: ToProtoError(err)}, nil
 	}
-	if _, err := s.store.GetProtocolProfile(ctx, req.GetProtocolProfileId()); err != nil {
+	protocol, err := s.store.GetProtocolProfile(ctx, req.GetProtocolProfileId())
+	if err != nil {
 		return &waappv1.PrepareClientProfileResponse{Error: ToProtoError(err)}, nil
 	}
 	now := s.clock.Now()
@@ -201,7 +211,7 @@ func (s *Server) PrepareClientProfile(ctx context.Context, req *waappv1.PrepareC
 	if err := s.store.SaveClientProfile(ctx, profile); err != nil {
 		return &waappv1.PrepareClientProfileResponse{Error: ToProtoError(err)}, nil
 	}
-	runErr := s.runner.PrepareClientProfile(ctx, EngineProfileInput{WAAccountID: waAccountID(account), ClientProfileID: profile.GetClientProfileId(), ProtocolProfileID: req.GetProtocolProfileId(), Phone: account.GetPhone()})
+	runErr := s.runner.PrepareClientProfile(ctx, EngineProfileInput{WAAccountID: waAccountID(account), ClientProfileID: profile.GetClientProfileId(), ProtocolProfileID: req.GetProtocolProfileId(), AppVersion: protocolAppVersion(protocol), Phone: account.GetPhone()})
 	profile.Audit.UpdatedAt = timestamppb.New(s.clock.Now())
 	if runErr != nil {
 		profile.Status = waappv1.ClientProfileStatus_CLIENT_PROFILE_STATUS_REJECTED
@@ -278,6 +288,46 @@ func normalizePhone(phone *waappv1.PhoneTarget) *waappv1.PhoneTarget {
 		e164 = "+" + e164
 	}
 	return &waappv1.PhoneTarget{E164Number: e164, CountryCallingCode: cc, NationalNumber: national, CountryIso2: strings.ToUpper(strings.TrimSpace(phone.GetCountryIso2()))}
+}
+
+func protocolAppVersion(profile *waappv1.ProtocolProfile) string {
+	if profile == nil {
+		return defaultWAAppVersion
+	}
+	return nativeAppVersion(profile.GetAppVersion())
+}
+
+func (s *Server) clientProfileAppVersion(ctx context.Context, profile *waappv1.ClientProfile) string {
+	if s == nil || profile == nil {
+		return defaultWAAppVersion
+	}
+	protocol, err := s.store.GetProtocolProfile(ctx, profile.GetProtocolProfileId())
+	if err != nil {
+		return defaultWAAppVersion
+	}
+	return protocolAppVersion(protocol)
+}
+
+func (s *Server) protocolIDAppVersion(ctx context.Context, protocolProfileID string) string {
+	if s == nil || strings.TrimSpace(protocolProfileID) == "" {
+		return defaultWAAppVersion
+	}
+	protocol, err := s.store.GetProtocolProfile(ctx, protocolProfileID)
+	if err != nil {
+		return defaultWAAppVersion
+	}
+	return protocolAppVersion(protocol)
+}
+
+func (s *Server) loginStateAppVersion(ctx context.Context, loginState *waappv1.LoginState) string {
+	if s == nil || loginState == nil {
+		return defaultWAAppVersion
+	}
+	profile, err := s.store.GetClientProfile(ctx, loginState.GetClientProfileId())
+	if err != nil {
+		return defaultWAAppVersion
+	}
+	return s.clientProfileAppVersion(ctx, profile)
 }
 
 func protoDurationSeconds(d interface{ GetSeconds() int64 }) time.Duration {

@@ -1,5 +1,6 @@
 import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import type { WaPhoneInput, WaWorkflowResponse } from './wa-api';
+import { accountReasonLabel } from './wa-result-labels';
 
 const PHONE_NOT_POSSIBLE_MESSAGE = '手机号位数不符合国家规则，请检查国家拨号码和手机号。';
 
@@ -45,8 +46,8 @@ export function resolveWaPhoneTarget(value: string, countryCallingCode = ''): Wa
 
 export function resultStatus(result?: WaWorkflowResponse | null) {
   if (!result) return '未执行';
-  if (result.success || result.passed) return result.status || '通过';
-  return result.status || result.error_message || '失败';
+  if (result.success || result.passed) return '通过';
+  return accountReasonLabel(result.error_message, result.status) || '失败';
 }
 
 export function proxyArea(result?: WaWorkflowResponse | null) {

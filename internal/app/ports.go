@@ -99,6 +99,7 @@ type EngineProfileInput struct {
 	WAAccountID       string
 	ClientProfileID   string
 	ProtocolProfileID string
+	AppVersion        string
 	Phone             *waappv1.PhoneTarget
 }
 
@@ -106,7 +107,9 @@ type EngineRegistrationInput struct {
 	WAAccountID       string
 	ClientProfileID   string
 	ProtocolProfileID string
+	AppVersion        string
 	Phone             *waappv1.PhoneTarget
+	DeliveryMethod    waappv1.VerificationDeliveryMethod
 }
 
 type EngineSubmitInput struct {
@@ -120,6 +123,7 @@ type EngineLoginCheckInput struct {
 	WAAccountID          string
 	ClientProfileID      string
 	RegisteredIdentityID string
+	AppVersion           string
 	RemoteTimeout        time.Duration
 }
 
@@ -128,6 +132,7 @@ type EngineMessageInput struct {
 	ClientProfileID      string
 	RegisteredIdentityID string
 	ProtocolProfileID    string
+	AppVersion           string
 	MessageSessionID     string
 	WaitTimeout          time.Duration
 	MaxMessages          int
@@ -147,9 +152,9 @@ type EngineAccountSettingsInput struct {
 	ClientProfileID      string
 	RegisteredIdentityID string
 	LoginStateID         string
+	AppVersion           string
 	Kind                 waappv1.AccountSettingsOperationKind
 	Pin                  string
-	RecoveryEmail        string
 	EmailAddress         string
 	GoogleIDToken        string
 	LocaleLanguage       string
@@ -163,6 +168,7 @@ type EngineContactResolveInput struct {
 	WAAccountID          string
 	ClientProfileID      string
 	RegisteredIdentityID string
+	AppVersion           string
 	JIDs                 []string
 	RemoteTimeout        time.Duration
 }
@@ -171,6 +177,7 @@ type EngineContactProfilePictureInput struct {
 	WAAccountID          string
 	ClientProfileID      string
 	RegisteredIdentityID string
+	AppVersion           string
 	ContactJID           string
 	ContactPNJID         string
 	ContactPictureID     string
@@ -213,6 +220,10 @@ type EngineCodeResult struct {
 	Status             waappv1.VerificationRequestStatus
 	ExpectedCodeLength int32
 	ExpiresAt          time.Time
+	RetryAfter         time.Duration
+	MethodStatuses     []VerificationMethodStatus
+	RawStatus          string
+	RawReason          string
 	Err                error
 }
 
@@ -234,6 +245,7 @@ type EngineMessageReadReceiptInput struct {
 	WAAccountID          string
 	ClientProfileID      string
 	RegisteredIdentityID string
+	AppVersion           string
 	Messages             []EngineMessageReadReceipt
 	RemoteTimeout        time.Duration
 }
@@ -247,6 +259,24 @@ type EngineMessageReadReceipt struct {
 type EngineMessageReadReceiptResult struct {
 	Sent int
 	Err  error
+}
+
+type EngineTextMessageInput struct {
+	WAAccountID          string
+	ClientProfileID      string
+	RegisteredIdentityID string
+	AppVersion           string
+	ContactJID           string
+	Text                 string
+	ClientMessageID      string
+	RemoteTimeout        time.Duration
+}
+
+type EngineTextMessageResult struct {
+	ProviderMessageID string
+	SentAt            time.Time
+	AckStatus         waappv1.MessageAckStatus
+	Err               error
 }
 
 type EngineMessageBatchResult struct {
@@ -265,6 +295,7 @@ type EngineDecryptResult struct {
 type EngineAccountSettingsResult struct {
 	Status           waappv1.AccountSettingsOperationStatus
 	WaitTime         time.Duration
+	TwoFactorStatus  *waappv1.TwoFactorAuthStatus
 	ProfilePictureID string
 	HasStaging       bool
 	Err              error
