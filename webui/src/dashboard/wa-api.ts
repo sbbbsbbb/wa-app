@@ -1,4 +1,4 @@
-import type { RemoveAccountProfilePictureResponse, RequestAccountEmailOtpResponse, SetAccountEmailResponse, SetAccountProfileNameResponse, SetAccountProfilePictureResponse, SetTwoFactorAuthSettingsResponse, VerifyAccountEmailOtpResponse } from '../proto/byte/v/forge/waapp/v1/account_settings';
+import type { GetTwoFactorAuthStatusResponse, RemoveAccountProfilePictureResponse, RequestAccountEmailOtpResponse, SetAccountEmailResponse, SetAccountProfileNameResponse, SetAccountProfilePictureResponse, SetTwoFactorAuthSettingsResponse, VerifyAccountEmailOtpResponse } from '../proto/byte/v/forge/waapp/v1/account_settings';
 import type { DeleteWAContactResponse, ListWAContactsResponse, ResolveWAContactsResponse } from '../proto/byte/v/forge/waapp/v1/contacts';
 import type { ListAccountOtpMessagesResponse } from '../proto/byte/v/forge/waapp/v1/extraction';
 import type { DeleteAccountMessagesResponse, GetLongConnectionStatusResponse, ListAccountMessagesResponse, LongConnectionState, MarkAccountMessagesReadResponse, SendTextMessageResponse } from '../proto/byte/v/forge/waapp/v1/messaging';
@@ -18,6 +18,7 @@ export const waKeys = {
   messages: (waAccountId: string, contactRef = '') => ['wa', 'messages', waAccountId, contactRef] as const,
   contacts: (waAccountId: string) => ['wa', 'contacts', waAccountId] as const,
   contactResolve: (waAccountId: string) => ['wa', 'contacts', 'resolve', waAccountId] as const,
+  twoFactorStatus: (waAccountId: string) => ['wa', '2fa-status', waAccountId] as const,
   otpMessages: (waAccountId: string) => ['wa', 'otp-messages', waAccountId] as const,
   connections: (filters: WaConnectionFilters = {}) => ['wa', 'connections', filters.login_state_id || '', filters.wa_account_id || '', filters.client_profile_id || '', filters.registered_identity_id || ''] as const,
 };
@@ -104,6 +105,12 @@ export async function deleteWaAccount(account: WAAccount | string) {
 export const probeWaPhoneSMS = (input: WaPhoneInput) => api<WaWorkflowResponse>('/api/wa/phone/sms-probe', { method: 'POST', body: JSON.stringify(input) });
 export const registerWaPhone = (input: WaPhoneInput) => api<WaWorkflowResponse>('/api/wa/register', { method: 'POST', body: JSON.stringify(input) });
 export const checkWaLoginState = (input: { login_state_id?: string; registered_identity_id?: string; wa_account_id?: string; client_profile_id?: string; remote_timeout_seconds?: number }) => api<WaWorkflowResponse>('/api/wa/login-state-check', { method: 'POST', body: JSON.stringify(input) });
+
+export async function getWaTwoFactorAuthStatus(account: WAAccount) {
+  const accountID = waAccountID(account);
+  if (!accountID) throw new Error('wa_account_id is required');
+  return requireAccountSettingsResponse(await api<GetTwoFactorAuthStatusResponse>(`/api/wa/account-settings/2fa/status?${new URLSearchParams({ wa_account_id: accountID })}`));
+}
 
 export function submitWaRegistrationOTP(account: WAAccount | string, otp: string) {
   const accountID = typeof account === 'string' ? account : waAccountID(account);

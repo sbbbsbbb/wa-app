@@ -283,6 +283,7 @@ type EngineDecryptResult struct {
 type EngineAccountSettingsResult struct {
 	Status           waappv1.AccountSettingsOperationStatus
 	WaitTime         time.Duration
+	TwoFactorStatus  *waappv1.TwoFactorAuthStatus
 	ProfilePictureID string
 	HasStaging       bool
 	Err              error

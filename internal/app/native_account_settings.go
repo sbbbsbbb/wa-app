@@ -67,6 +67,8 @@ func (e *NativeEngine) applyAccountProfileName(ctx context.Context, input Engine
 
 func buildAccountSettingsIQ(id string, input EngineAccountSettingsInput) chatdNode {
 	switch input.Kind {
+	case waappv1.AccountSettingsOperationKind_ACCOUNT_SETTINGS_OPERATION_KIND_TWO_FACTOR_AUTH_STATUS_GET:
+		return buildGetTwoFactorAuthStatusIQ(id)
 	case waappv1.AccountSettingsOperationKind_ACCOUNT_SETTINGS_OPERATION_KIND_TWO_FACTOR_AUTH_SETTINGS:
 		return buildTwoFactorAuthSettingsIQ(id, input.Pin)
 	case waappv1.AccountSettingsOperationKind_ACCOUNT_SETTINGS_OPERATION_KIND_ACCOUNT_EMAIL_SET:
@@ -86,6 +88,10 @@ func buildAccountSettingsIQ(id string, input EngineAccountSettingsInput) chatdNo
 
 func buildAccountIQ(id string, iqType string, children []chatdNode) chatdNode {
 	return chatdNode{Tag: "iq", Attrs: map[string]string{"to": "s.whatsapp.net", "id": id, "xmlns": "urn:xmpp:whatsapp:account", "type": iqType}, Content: children}
+}
+
+func buildGetTwoFactorAuthStatusIQ(id string) chatdNode {
+	return buildAccountIQ(id, "get", []chatdNode{{Tag: "2fa"}})
 }
 
 func buildTwoFactorAuthSettingsIQ(id string, pin string) chatdNode {
@@ -126,6 +132,8 @@ func accountSettingsResultFromIQ(kind waappv1.AccountSettingsOperationKind, node
 		return EngineAccountSettingsResult{Status: waappv1.AccountSettingsOperationStatus_ACCOUNT_SETTINGS_OPERATION_STATUS_REJECTED, Err: err}
 	}
 	switch kind {
+	case waappv1.AccountSettingsOperationKind_ACCOUNT_SETTINGS_OPERATION_KIND_TWO_FACTOR_AUTH_STATUS_GET:
+		return twoFactorAuthStatusFromIQ(node)
 	case waappv1.AccountSettingsOperationKind_ACCOUNT_SETTINGS_OPERATION_KIND_ACCOUNT_EMAIL_SET:
 		return emailSetResultFromIQ(node)
 	case waappv1.AccountSettingsOperationKind_ACCOUNT_SETTINGS_OPERATION_KIND_ACCOUNT_EMAIL_OTP_REQUEST:
@@ -137,6 +145,19 @@ func accountSettingsResultFromIQ(kind waappv1.AccountSettingsOperationKind, node
 	default:
 		return EngineAccountSettingsResult{Status: waappv1.AccountSettingsOperationStatus_ACCOUNT_SETTINGS_OPERATION_STATUS_ACCEPTED}
 	}
+}
+
+func twoFactorAuthStatusFromIQ(node chatdNode) EngineAccountSettingsResult {
+	twoFactorNode, ok := chatdChild(node, "2fa")
+	if !ok {
+		return EngineAccountSettingsResult{TwoFactorStatus: &waappv1.TwoFactorAuthStatus{}}
+	}
+	_, hasCode := chatdChild(twoFactorNode, "code")
+	_, hasEmail := chatdChild(twoFactorNode, "email")
+	return EngineAccountSettingsResult{TwoFactorStatus: &waappv1.TwoFactorAuthStatus{
+		Configured:      hasCode || chatdNodeBool(twoFactorNode, "configured") || chatdNodeBool(twoFactorNode, "enabled"),
+		EmailConfigured: hasEmail || chatdNodeBool(twoFactorNode, "email_configured") || chatdNodeBool(twoFactorNode, "email_set"),
+	}}
 }
 
 func accountProfilePictureSetResultFromIQ(node chatdNode) EngineAccountSettingsResult {

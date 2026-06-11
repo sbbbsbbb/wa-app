@@ -14,6 +14,24 @@ import (
 
 const accountProfileNameMaxRunes = 25
 
+func (s *Server) GetTwoFactorAuthStatus(ctx context.Context, req *waappv1.GetTwoFactorAuthStatusRequest) (*waappv1.GetTwoFactorAuthStatusResponse, error) {
+	if err := validateContext(req.GetContext()); err != nil {
+		return &waappv1.GetTwoFactorAuthStatusResponse{Error: ToProtoError(err)}, nil
+	}
+	result, err := s.queryAccountSettings(ctx, req.GetContext(), req.GetSelector(), waappv1.AccountSettingsOperationKind_ACCOUNT_SETTINGS_OPERATION_KIND_TWO_FACTOR_AUTH_STATUS_GET)
+	if err != nil {
+		return &waappv1.GetTwoFactorAuthStatusResponse{Error: ToProtoError(err)}, nil
+	}
+	if result.Err != nil {
+		return &waappv1.GetTwoFactorAuthStatusResponse{Error: ToProtoError(result.Err)}, nil
+	}
+	status := result.TwoFactorStatus
+	if status == nil {
+		status = &waappv1.TwoFactorAuthStatus{}
+	}
+	return &waappv1.GetTwoFactorAuthStatusResponse{Status: status}, nil
+}
+
 func (s *Server) SetTwoFactorAuthSettings(ctx context.Context, req *waappv1.SetTwoFactorAuthSettingsRequest) (*waappv1.SetTwoFactorAuthSettingsResponse, error) {
 	if err := validateContext(req.GetContext()); err != nil {
 		return &waappv1.SetTwoFactorAuthSettingsResponse{Error: ToProtoError(err)}, nil
@@ -192,6 +210,25 @@ func (s *Server) applyAccountSettingsResult(ctx context.Context, requestContext 
 		op.WaitTime = durationpb.New(result.WaitTime)
 	}
 	return op, result, nil
+}
+
+func (s *Server) queryAccountSettings(ctx context.Context, requestContext *waappv1.RequestContext, selector *waappv1.AccountLoginSelector, kind waappv1.AccountSettingsOperationKind) (EngineAccountSettingsResult, error) {
+	loginState, err := s.accountSettingsLoginState(ctx, selector)
+	if err != nil {
+		return EngineAccountSettingsResult{}, err
+	}
+	runner, release, err := s.accountSettingsRunner(ctx, requestContext, kind)
+	if err != nil {
+		return EngineAccountSettingsResult{}, err
+	}
+	defer release()
+	return runner.ApplyAccountSettings(ctx, EngineAccountSettingsInput{
+		WAAccountID:          loginState.GetWaAccountId(),
+		ClientProfileID:      loginState.GetClientProfileId(),
+		RegisteredIdentityID: loginState.GetRegisteredIdentityId(),
+		LoginStateID:         loginState.GetLoginStateId(),
+		Kind:                 kind,
+	}), nil
 }
 
 func (s *Server) accountSettingsRunner(ctx context.Context, requestContext *waappv1.RequestContext, kind waappv1.AccountSettingsOperationKind) (ProtocolEngine, func(), error) {

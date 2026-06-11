@@ -46,6 +46,7 @@ func runDashboardHTTP(ctx context.Context, listenAddr, staticDir string, service
 	mux.HandleFunc("/api/wa/phone/sms-probe", server.handlePhoneSMSProbe)
 	mux.HandleFunc("/api/wa/register", server.handleRegister)
 	mux.HandleFunc("/api/wa/login-state-check", server.handleLoginStateCheck)
+	mux.HandleFunc("/api/wa/account-settings/2fa/status", server.handleGetTwoFactorAuthStatus)
 	mux.HandleFunc("/api/wa/account-settings/2fa", server.handleSetTwoFactorAuthSettings)
 	mux.HandleFunc("/api/wa/account-settings/email", server.handleSetAccountEmail)
 	mux.HandleFunc("/api/wa/account-settings/email/otp/request", server.handleRequestAccountEmailOtp)

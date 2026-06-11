@@ -6,6 +6,26 @@ import (
 	waappv1 "github.com/byte-v-forge/wa-app/gen/go/byte/v/forge/waapp/v1"
 )
 
+func (s *dashboardHTTP) handleGetTwoFactorAuthStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if s.service == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "wa-app service is not configured"})
+		return
+	}
+	resp, err := s.service.GetTwoFactorAuthStatus(r.Context(), &waappv1.GetTwoFactorAuthStatusRequest{
+		Context:  &waappv1.RequestContext{RequestId: newRequestID("wa-account-2fa-status")},
+		Selector: accountSettingsSelector(queryPayload(r)),
+	})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "get WA 2FA status failed"})
+		return
+	}
+	writeProtoJSON(w, http.StatusOK, resp)
+}
+
 func (s *dashboardHTTP) handleSetTwoFactorAuthSettings(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAccountSettingsPost(w, r) {
 		return
@@ -153,6 +173,16 @@ func (s *dashboardHTTP) requireAccountSettingsPost(w http.ResponseWriter, r *htt
 
 func readAccountSettingsPayload(w http.ResponseWriter, r *http.Request) (map[string]any, bool) {
 	return readJSONPayload(w, r)
+}
+
+func queryPayload(r *http.Request) map[string]any {
+	payload := map[string]any{}
+	for key, values := range r.URL.Query() {
+		if len(values) > 0 {
+			payload[key] = values[len(values)-1]
+		}
+	}
+	return payload
 }
 
 func accountSettingsRequestContext(payload map[string]any, prefix string) *waappv1.RequestContext {

@@ -14,6 +14,7 @@ option java_package = "com.bytevforge.waapp.v1";
 option php_namespace = "ByteVForge\\WaApp\\V1";
 
 service WaAccountSettingsService {
+  rpc GetTwoFactorAuthStatus(GetTwoFactorAuthStatusRequest) returns (GetTwoFactorAuthStatusResponse);
   rpc SetTwoFactorAuthSettings(SetTwoFactorAuthSettingsRequest) returns (SetTwoFactorAuthSettingsResponse);
   rpc SetAccountEmail(SetAccountEmailRequest) returns (SetAccountEmailResponse);
   rpc RequestAccountEmailOtp(RequestAccountEmailOtpRequest) returns (RequestAccountEmailOtpResponse);
@@ -33,6 +34,7 @@ enum AccountSettingsOperationKind {
   ACCOUNT_SETTINGS_OPERATION_KIND_ACCOUNT_PROFILE_NAME_SET = 5;
   ACCOUNT_SETTINGS_OPERATION_KIND_ACCOUNT_PROFILE_PICTURE_SET = 6;
   ACCOUNT_SETTINGS_OPERATION_KIND_ACCOUNT_PROFILE_PICTURE_REMOVE = 7;
+  ACCOUNT_SETTINGS_OPERATION_KIND_TWO_FACTOR_AUTH_STATUS_GET = 8;
 }
 
 enum AccountSettingsOperationStatus {
@@ -63,6 +65,21 @@ message AccountSettingsOperation {
   google.protobuf.Duration wait_time = 8;
   google.protobuf.Timestamp completed_at = 9;
   WaError error = 10;
+}
+
+message TwoFactorAuthStatus {
+  bool configured = 1;
+  bool email_configured = 2;
+}
+
+message GetTwoFactorAuthStatusRequest {
+  RequestContext context = 1;
+  AccountLoginSelector selector = 2;
+}
+
+message GetTwoFactorAuthStatusResponse {
+  TwoFactorAuthStatus status = 1;
+  WaError error = 2;
 }
 
 message SetTwoFactorAuthSettingsRequest {
