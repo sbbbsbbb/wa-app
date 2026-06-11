@@ -5,6 +5,7 @@ import { Navigate, Outlet, useMatches, useNavigate, useOutletContext, useParams 
 import { toast } from 'sonner';
 import { Loader2, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { Toaster } from '@/components/ui/sonner';
 import type { LongConnectionState } from '../proto/byte/v/forge/waapp/v1/messaging';
@@ -100,7 +101,18 @@ function AccountFallback({ accounts }: { accounts: WAAccount[] }) {
 
 function NoAccount() {
   const navigate = useNavigate();
-  return <PageCenter><div className="grid max-w-xs gap-3 text-center"><WhatsAppIcon className="mx-auto size-12" /><div><p className="font-semibold">还没有账号</p><p className="mt-1 text-sm text-muted-foreground">添加账号后即可查看联系人和消息。</p></div><Button onClick={() => navigate('/accounts/new')}><Plus size={16} />添加账号</Button></div></PageCenter>;
+  return (
+    <PageCenter>
+      <Empty className="max-w-sm border-0">
+        <EmptyHeader>
+          <EmptyMedia><WhatsAppIcon className="size-12" /></EmptyMedia>
+          <EmptyTitle>还没有账号</EmptyTitle>
+          <EmptyDescription>添加账号后即可查看联系人和消息。</EmptyDescription>
+        </EmptyHeader>
+        <EmptyContent><Button onClick={() => navigate('/accounts/new')}><Plus size={16} />添加账号</Button></EmptyContent>
+      </Empty>
+    </PageCenter>
+  );
 }
 
 function PageShell({ title, children }: { title: string; children: ReactNode }) {

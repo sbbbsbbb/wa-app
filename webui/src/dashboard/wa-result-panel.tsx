@@ -32,7 +32,7 @@ export function WaResultPanel({ title, phone, result, loading }: { title: string
 }
 
 function MetricChip({ label, value, tone }: { label: string; value: string; tone: ResultTone }) {
-  return <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] ${toneClass(tone, true)}`}><span className="text-muted-foreground">{label}</span><span className="font-semibold">{value}</span></span>;
+  return <Badge variant="outline" className={`gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-normal ${toneClass(tone, true)}`}><span className="text-muted-foreground">{label}</span><span className="font-semibold">{value}</span></Badge>;
 }
 
 function GridMeta({ label, value, tone = 'idle' }: { label: string; value: string; tone?: ResultTone }) {

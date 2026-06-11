@@ -7,7 +7,9 @@ import { WaAccountProfileSettings } from './wa-account-profile-settings';
 import { WaAccountSecurityPanel } from './wa-account-security';
 import { WaDeviceFingerprintPanel } from './wa-device-fingerprint';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table';
 
 type Props = {
   account: WAAccount;
@@ -43,7 +45,14 @@ export function WaAccountDetail({ account, profiles, profilesLoading, busy, onDo
 }
 
 function InfoPanel({ title, icon, children }: { title: string; icon?: ReactNode; children: ReactNode }) {
-  return <section className="grid gap-4 rounded-xl border border-border bg-card p-4 shadow-sm"><h2 className="inline-flex items-center gap-2 text-sm font-semibold">{icon}{title}</h2>{children}</section>;
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle className="inline-flex items-center gap-2 text-sm">{icon}{title}</CardTitle>
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
+  );
 }
 
 function isRegistrationPending(account: WAAccount) {
@@ -62,7 +71,19 @@ function ManualOtpSubmit({ account, busy, onDone, onError }: { account: WAAccoun
       onError(error instanceof Error ? error.message : String(error));
     }
   }
-  return <section className="grid gap-3 p-5"><h3 className="inline-flex items-center gap-2 text-sm font-semibold"><KeyRound size={15} />提交注册 OTP</h3><div className="flex gap-2"><Input value={otp} onChange={(event) => setOtp(event.target.value)} inputMode="numeric" autoComplete="one-time-code" type="password" placeholder="验证码" /><Button disabled={busy || !otp.trim()} onClick={() => void submit()}>提交</Button></div></section>;
+  return (
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle className="inline-flex items-center gap-2 text-sm"><KeyRound size={15} />提交注册 OTP</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex gap-2">
+          <Input value={otp} onChange={(event) => setOtp(event.target.value)} inputMode="numeric" autoComplete="one-time-code" type="password" placeholder="验证码" />
+          <Button disabled={busy || !otp.trim()} onClick={() => void submit()}>提交</Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 function InfoGrid({ account }: { account: WAAccount }) {
@@ -76,11 +97,16 @@ function InfoGrid({ account }: { account: WAAccount }) {
     ['创建时间', formatTime(account.audit?.created_at)],
     ['更新时间', formatTime(account.audit?.updated_at)],
   ];
-  return <dl className="grid sm:grid-cols-2 sm:gap-x-6">{rows.map(([label, value]) => <InfoRow key={label} label={label} value={value} />)}</dl>;
+  return <Table><TableBody>{rows.map(([label, value]) => <InfoRow key={label} label={label} value={value} />)}</TableBody></Table>;
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
-  return <div className="grid min-w-0 grid-cols-[4.5rem_1fr] gap-3 border-b border-border/70 py-2 text-sm last:border-b-0"><dt className="text-muted-foreground">{label}</dt><dd className="min-w-0 truncate font-mono text-xs leading-5">{value}</dd></div>;
+  return (
+    <TableRow className="hover:bg-transparent">
+      <TableCell className="w-24 text-muted-foreground">{label}</TableCell>
+      <TableCell className="max-w-0 truncate font-mono text-xs">{value}</TableCell>
+    </TableRow>
+  );
 }
 
 function formatTime(value?: string) {

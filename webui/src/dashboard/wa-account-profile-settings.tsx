@@ -5,6 +5,7 @@ import { useMutation } from '@tanstack/react-query';
 import type { WAAccount } from '../proto/byte/v/forge/waapp/v1/profile';
 import { setWaAccountProfileName, setWaAccountProfilePicture, waAccountID, waAccountProfilePictureURL } from './wa-api';
 import { WhatsAppIcon } from './wa-brand-icon';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 
@@ -117,7 +118,14 @@ function submitName(event: FormEvent<HTMLFormElement>, run: () => void) {
 }
 
 function StoredAvatar({ src, onError }: { src: string; onError: () => void }) {
-  return src ? <img className="size-12 object-cover" src={src} alt="当前头像" onError={onError} /> : <WhatsAppIcon className="size-7" />;
+  return (
+    <Avatar className="size-12">
+      {src ? <AvatarImage src={src} alt="当前头像" onError={onError} /> : null}
+      <AvatarFallback>
+        <WhatsAppIcon className="size-7" />
+      </AvatarFallback>
+    </Avatar>
+  );
 }
 
 function AvatarPreview({ editor, image, onReady, onError }: { editor: RefObject<AvatarEditorRef | null>; image: File; onReady: (dataURL: string) => void; onError: (message: string) => void }) {

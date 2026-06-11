@@ -7,8 +7,10 @@ import type { WaContact } from './wa-chat-model';
 import { formatChatTime } from './wa-chat-model';
 import { WaContactAvatar } from './wa-contact-avatar';
 import { waContactPath } from './wa-route-paths';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty';
 import { Input } from '@/components/ui/input';
 
 export function WaContactList({ accountID, contacts, selectedID, loading, error, deletingID, onOpenContact, onDeleteContact }: { accountID: string; contacts: WaContact[]; selectedID: string; loading: boolean; error?: string; deletingID?: string; onOpenContact: (contactID: string) => void; onDeleteContact: (contactID: string) => void }) {
@@ -25,13 +27,17 @@ export function WaContactList({ accountID, contacts, selectedID, loading, error,
         <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索联系人" aria-label="搜索联系人" />
       </div>
       <div className="min-h-0 overflow-y-auto p-2">
-        {error && <p className="rounded-xl border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}
-        {!loading && !error && contacts.length === 0 && <p className="p-4 text-sm text-muted-foreground">暂无联系人，收到消息后会显示在这里。</p>}
-        {!loading && !error && contacts.length > 0 && visibleContacts.length === 0 && <p className="p-4 text-sm text-muted-foreground">没有匹配联系人。</p>}
+        {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+        {!loading && !error && contacts.length === 0 && <ContactEmpty title="暂无联系人" description="收到消息后会显示在这里。" />}
+        {!loading && !error && contacts.length > 0 && visibleContacts.length === 0 && <ContactEmpty title="没有匹配联系人" description="换个关键词再试。" />}
         {visibleContacts.map((contact) => <ContactRow key={contact.id} accountID={accountID} contact={contact} selected={contact.id === selectedID} deleting={deletingID === contact.id} onOpenContact={onOpenContact} onDeleteContact={onDeleteContact} />)}
       </div>
     </aside>
   );
+}
+
+function ContactEmpty({ title, description }: { title: string; description: string }) {
+  return <Empty className="border-0 p-4"><EmptyHeader><EmptyTitle>{title}</EmptyTitle><EmptyDescription>{description}</EmptyDescription></EmptyHeader></Empty>;
 }
 
 function ContactRow({ accountID, contact, selected, deleting, onOpenContact, onDeleteContact }: { accountID: string; contact: WaContact; selected: boolean; deleting: boolean; onOpenContact: (contactID: string) => void; onDeleteContact: (contactID: string) => void }) {

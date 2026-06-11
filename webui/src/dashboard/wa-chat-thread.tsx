@@ -8,6 +8,7 @@ import { toAssistantMessage, type WaChatEvent, type WaChatMeta, type WaContact }
 import { WaMessageContent } from './wa-message-content';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Input } from '@/components/ui/input';
 
 export function WaChatThread({ contact, events, loading, sending, error, onSendMessage }: { contact?: WaContact; events: WaChatEvent[]; loading: boolean; sending: boolean; error?: string; onSendMessage: (text: string) => Promise<unknown> }) {
@@ -96,7 +97,15 @@ function ChatComposer({ disabled, error, onSendMessage }: { disabled: boolean; e
 }
 
 function EmptyConversation({ title }: { title: string }) {
-  return <div className="mx-auto mt-16 max-w-sm rounded-2xl bg-card/90 p-6 text-center text-sm text-muted-foreground shadow-sm"><WhatsAppIcon className="mx-auto mb-3 size-9" /><p className="font-medium text-foreground">{title}</p><p className="mt-1">选择联系人或等待新消息。</p></div>;
+  return (
+    <Empty className="mx-auto mt-16 max-w-sm flex-none border-0 bg-card/90 shadow-sm">
+      <EmptyHeader>
+        <EmptyMedia><WhatsAppIcon className="size-9" /></EmptyMedia>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>选择联系人或等待新消息。</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  );
 }
 
 async function noopNewMessage(_message: AppendMessage) {}
