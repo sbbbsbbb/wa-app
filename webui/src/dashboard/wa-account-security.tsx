@@ -1,7 +1,8 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import { CheckCircle2, KeyRound, Mail, Pencil, Send, ShieldCheck, X } from 'lucide-react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AccountSettingsOperationStatus } from '../proto/byte/v/forge/waapp/v1/account_settings';
+import type { GetTwoFactorAuthStatusResponse } from '../proto/byte/v/forge/waapp/v1/account_settings';
 import type { WaAccountProjection } from './wa-api';
 import { getWaTwoFactorAuthStatus, requestWaAccountEmailOtp, setWaAccountEmail, setWaTwoFactorAuthSettings, verifyWaAccountEmailOtp, waAccountID, waKeys } from './wa-api';
 import { Badge, type BadgeVariant, Button, Field, FieldGroup, FieldLabel, Input } from './ui';
@@ -10,6 +11,7 @@ type Props = { account: WaAccountProjection; onDone: (message: string) => void; 
 type TwoFactorStatusView = { isPending: boolean; isError: boolean; data?: { status?: { configured?: boolean; email_configured?: boolean } } };
 
 export function WaAccountSecurityPanel({ account, onDone, onError }: Props) {
+  const queryClient = useQueryClient();
   const [pin, setPin] = useState('');
   const [email, setEmail] = useState('');
   const [emailOtp, setEmailOtp] = useState('');
@@ -20,11 +22,16 @@ export function WaAccountSecurityPanel({ account, onDone, onError }: Props) {
   const handleError = (error: unknown) => onError(error instanceof Error ? error.message : String(error));
   const handleSuccess = (message: string, status?: AccountSettingsOperationStatus) => { setLastStatus(status); onDone(message); };
   const accountID = waAccountID(account);
+  const statusKey = waKeys.twoFactorStatus(accountID);
+  const patchStatus = (patch: Partial<NonNullable<GetTwoFactorAuthStatusResponse['status']>>) => queryClient.setQueryData<GetTwoFactorAuthStatusResponse>(statusKey, (previous) => ({ error: previous?.error, status: { configured: previous?.status?.configured || false, email_configured: previous?.status?.email_configured || false, ...patch } }));
   const twoFactorStatus = useQuery({
-    queryKey: waKeys.twoFactorStatus(accountID),
+    queryKey: statusKey,
     queryFn: () => getWaTwoFactorAuthStatus(account),
     enabled: Boolean(accountID),
-    staleTime: 30_000,
+    gcTime: 30 * 60_000,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    staleTime: 10 * 60_000,
   });
   const pinConfigured = twoFactorConfigured(twoFactorStatus);
   const emailConfigured = twoFactorEmailConfigured(twoFactorStatus);
@@ -35,20 +42,27 @@ export function WaAccountSecurityPanel({ account, onDone, onError }: Props) {
     onSuccess: (resp) => {
       setPin('');
       setPinEditing(false);
-      void twoFactorStatus.refetch();
+      if (resp.operation?.status !== AccountSettingsOperationStatus.ACCOUNT_SETTINGS_OPERATION_STATUS_REJECTED) patchStatus({ configured: true });
       handleSuccess(pinConfigured ? '2FA PIN 修改请求已提交' : '2FA PIN 设置请求已提交', resp.operation?.status);
     },
     onError: handleError,
   });
   const emailSet = useMutation({
-    mutationFn: () => setWaAccountEmail(account, { email_address: email }),
+    mutationFn: async () => {
+      const setResp = await setWaAccountEmail(account, { email_address: email });
+      const otpResp = shouldCollectEmailOtpAfterSet(setResp.operation?.status) ? await requestWaAccountEmailOtp(account) : undefined;
+      return { setResp, otpResp };
+    },
     onSuccess: (resp) => {
-      const status = resp.operation?.status;
-      setEmailOtpVisible(shouldCollectEmailOtpAfterSet(status));
+      const setStatus = resp.setResp.operation?.status;
+      const status = resp.otpResp?.operation?.status || setStatus;
+      setEmailOtpVisible(shouldCollectEmailOtpAfterSet(setStatus));
       setEmailEditing(false);
-      if (status === AccountSettingsOperationStatus.ACCOUNT_SETTINGS_OPERATION_STATUS_VERIFIED) setEmailOtp('');
-      void twoFactorStatus.refetch();
-      handleSuccess(emailConfigured ? '账户邮箱修改请求已提交' : '账户邮箱设置请求已提交', status);
+      if (setStatus === AccountSettingsOperationStatus.ACCOUNT_SETTINGS_OPERATION_STATUS_VERIFIED) {
+        setEmailOtp('');
+        patchStatus({ email_configured: true });
+      }
+      handleSuccess(resp.otpResp ? '邮箱 OTP 已请求' : emailConfigured ? '账户邮箱修改请求已提交' : '账户邮箱设置请求已提交', status);
     },
     onError: handleError,
   });
@@ -66,7 +80,8 @@ export function WaAccountSecurityPanel({ account, onDone, onError }: Props) {
       const status = resp.operation?.status;
       setEmailOtp('');
       setEmailOtpVisible(shouldShowEmailOtp(status));
-      void twoFactorStatus.refetch();
+      if (status === AccountSettingsOperationStatus.ACCOUNT_SETTINGS_OPERATION_STATUS_VERIFIED) patchStatus({ email_configured: true });
+      else void twoFactorStatus.refetch();
       handleSuccess('邮箱 OTP 校验请求已提交', status);
     },
     onError: handleError,
