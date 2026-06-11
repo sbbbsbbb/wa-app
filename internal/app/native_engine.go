@@ -425,6 +425,8 @@ func chatdFailurePhase(text string) string {
 		"chatd ack write",
 		"chatd iq write",
 		"chatd iq read",
+		"chatd message write",
+		"chatd message read",
 	} {
 		if strings.Contains(text, phase) {
 			return phase + " failed"

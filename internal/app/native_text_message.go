@@ -15,6 +15,14 @@ import (
 
 const defaultTextMessageSendTimeout = 20 * time.Second
 
+const textMessageAckTimeoutMessage = "WA text message send acknowledgement timed out"
+
+type chatdTextMessageSendResult struct {
+	EngineTextMessageResult
+	Items  []chatdReceivedItem
+	Update chatdSessionUpdate
+}
+
 func (e *NativeEngine) SendTextMessage(ctx context.Context, input EngineTextMessageInput) EngineTextMessageResult {
 	if e == nil {
 		return EngineTextMessageResult{Err: NewError(waappv1.WaErrorCode_WA_ERROR_CODE_INTERNAL, "native engine is required", false)}
@@ -38,8 +46,12 @@ func (e *NativeEngine) SendTextMessage(ctx context.Context, input EngineTextMess
 		return EngineTextMessageResult{Err: chatdReceiveError(err)}
 	}
 	defer session.Close()
-	result := e.sendTextMessageOnSession(operationCtx, session, &state, input, timeout)
-	return result
+	receiveInput := EngineMessageInput{WAAccountID: input.WAAccountID, ClientProfileID: input.ClientProfileID, RegisteredIdentityID: input.RegisteredIdentityID}
+	result := e.sendTextMessageOnSession(operationCtx, session, &state, input, receiveInput, timeout)
+	if err := e.applyTextMessageSendUpdate(operationCtx, input.ClientProfileID, &state, receiveInput, result.Items, result.Update); err != nil && result.Err == nil {
+		result.Err = err
+	}
+	return result.EngineTextMessageResult
 }
 
 func (e *longConnectionNativeEngine) SendTextMessage(ctx context.Context, input EngineTextMessageInput) EngineTextMessageResult {
@@ -54,35 +66,66 @@ func (e *longConnectionNativeEngine) SendTextMessage(ctx context.Context, input 
 	}
 	state.ensureMaps()
 	state.ChatStatic = ensureChatStatic(state.ChatStatic)
-	messageInput := EngineMessageInput{WAAccountID: input.WAAccountID, ClientProfileID: input.ClientProfileID, RegisteredIdentityID: input.RegisteredIdentityID}
+	messageInput := e.textMessageReceiveInput(input)
 	session, err := e.ensureSessionForIQLocked(ctx, messageInput, state)
 	if err != nil {
 		e.closeLocked()
 		return EngineTextMessageResult{Err: chatdReceiveError(err)}
 	}
 	timeout := contextBoundTimeout(ctx, textMessageSendTimeout(input.RemoteTimeout))
-	result := e.NativeEngine.sendTextMessageOnSession(ctx, session, &state, input, timeout)
+	result := e.NativeEngine.sendTextMessageOnSession(ctx, session, &state, input, messageInput, timeout)
+	e.bufferPendingLocked(result.Items, result.Update)
+	if err := e.NativeEngine.applyTextMessageSendUpdate(ctx, input.ClientProfileID, &state, messageInput, result.Items, result.Update); err != nil && result.Err == nil {
+		result.Err = err
+	}
 	if result.Err != nil && isChatdSendError(result.Err) {
 		e.closeLocked()
 	}
-	return result
+	return result.EngineTextMessageResult
 }
 
-func (e *NativeEngine) sendTextMessageOnSession(ctx context.Context, session *chatdSession, state *nativeState, input EngineTextMessageInput, timeout time.Duration) EngineTextMessageResult {
+func (e *NativeEngine) sendTextMessageOnSession(ctx context.Context, session *chatdSession, state *nativeState, input EngineTextMessageInput, receiveInput EngineMessageInput, timeout time.Duration) chatdTextMessageSendResult {
 	providerID := newTextProviderMessageID(input.ClientMessageID)
 	sentAt := e.clock.Now()
+	result := chatdTextMessageSendResult{EngineTextMessageResult: EngineTextMessageResult{ProviderMessageID: providerID, SentAt: sentAt}}
 	node, err := buildNativeTextMessageNode(state, input, providerID)
 	if err != nil {
-		return EngineTextMessageResult{ProviderMessageID: providerID, SentAt: sentAt, Err: err}
+		result.Err = err
+		return result
 	}
 	applyChatdSessionUpdateState(state, session.update())
 	if err := e.saveState(ctx, input.ClientProfileID, *state); err != nil {
-		return EngineTextMessageResult{ProviderMessageID: providerID, SentAt: sentAt, Err: err}
+		result.Err = err
+		return result
 	}
-	if err := sendChatdNodeWithTimeout(ctx, session, node, timeout); err != nil {
-		return EngineTextMessageResult{ProviderMessageID: providerID, SentAt: sentAt, Err: chatdSendError(err)}
+	items, update, err := session.sendMessageWithAck(ctx, receiveInput, node, providerID, timeout)
+	result.Items = items
+	result.Update = update
+	if err != nil {
+		result.Err = chatdSendError(err)
+		return result
 	}
-	return EngineTextMessageResult{ProviderMessageID: providerID, SentAt: sentAt}
+	result.AckStatus = waappv1.MessageAckStatus_MESSAGE_ACK_STATUS_ACKED
+	return result
+}
+
+func (e *NativeEngine) applyTextMessageSendUpdate(ctx context.Context, clientProfileID string, state *nativeState, input EngineMessageInput, items []chatdReceivedItem, update chatdSessionUpdate) error {
+	if state == nil {
+		return nil
+	}
+	_, payloads := splitReceivedItems(items)
+	if !applyChatdReceiveState(state, input, payloads, update) {
+		return nil
+	}
+	return e.saveState(ctx, clientProfileID, *state)
+}
+
+func (e *longConnectionNativeEngine) textMessageReceiveInput(input EngineTextMessageInput) EngineMessageInput {
+	messageInput := e.input
+	messageInput.WAAccountID = firstNonEmpty(messageInput.WAAccountID, input.WAAccountID)
+	messageInput.ClientProfileID = firstNonEmpty(messageInput.ClientProfileID, input.ClientProfileID)
+	messageInput.RegisteredIdentityID = firstNonEmpty(messageInput.RegisteredIdentityID, input.RegisteredIdentityID)
+	return messageInput
 }
 
 func buildNativeTextMessageNode(state *nativeState, input EngineTextMessageInput, providerID string) (chatdNode, error) {
@@ -258,20 +301,90 @@ func signalMessageVersion(version int) int {
 	return 3
 }
 
-func sendChatdNodeWithTimeout(ctx context.Context, session *chatdSession, node chatdNode, timeout time.Duration) error {
-	if session == nil || session.conn == nil {
-		return fmt.Errorf("chatd session is not open")
+func (s *chatdSession) sendMessageWithAck(ctx context.Context, input EngineMessageInput, node chatdNode, providerID string, timeout time.Duration) ([]chatdReceivedItem, chatdSessionUpdate, error) {
+	if s == nil || s.conn == nil {
+		return nil, chatdSessionUpdate{}, fmt.Errorf("chatd session is not open")
 	}
+	deadline := textMessageSendDeadline(ctx, timeout)
+	update := s.update()
+	if !deadline.After(time.Now()) {
+		return nil, update, errors.New(textMessageAckTimeoutMessage)
+	}
+	conn := s.conn
+	transport := s.transport
+	_ = conn.SetDeadline(deadline)
+	defer func() { _ = conn.SetDeadline(time.Time{}) }()
+	if err := transport.sendNode(node); err != nil {
+		return nil, update, chatdPhase("chatd message write", err)
+	}
+	items := []chatdReceivedItem{}
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return items, update, ctx.Err()
+		}
+		_ = conn.SetReadDeadline(deadline)
+		next, err := transport.readNode()
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				return items, update, errors.New(textMessageAckTimeoutMessage)
+			}
+			return items, update, chatdPhase("chatd message read", err)
+		}
+		if err := chatdMessageSendRejection(next, providerID); err != nil {
+			return items, update, err
+		}
+		if isChatdMessageSendAck(next, providerID) {
+			return items, update, nil
+		}
+		nextUpdate, nextItems, err := s.consumeIncomingNode(input, next, update, time.Now())
+		update = nextUpdate
+		items = append(items, nextItems...)
+		if err != nil {
+			return items, update, err
+		}
+	}
+	return items, update, errors.New(textMessageAckTimeoutMessage)
+}
+
+func textMessageSendDeadline(ctx context.Context, timeout time.Duration) time.Time {
 	deadline := time.Now().Add(textMessageSendTimeout(timeout))
 	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
 		deadline = ctxDeadline
 	}
-	if !deadline.After(time.Now()) {
-		return fmt.Errorf("WA text message send timed out")
+	return deadline
+}
+
+func isChatdMessageSendAck(node chatdNode, providerID string) bool {
+	if providerID == "" || node.Attrs["id"] != providerID {
+		return false
 	}
-	_ = session.conn.SetWriteDeadline(deadline)
-	defer func() { _ = session.conn.SetWriteDeadline(time.Time{}) }()
-	return session.transport.sendNode(node)
+	switch node.Tag {
+	case "ack":
+		return node.Attrs["class"] == "" || node.Attrs["class"] == "message"
+	case "receipt":
+		return true
+	default:
+		return false
+	}
+}
+
+func chatdMessageSendRejection(node chatdNode, providerID string) error {
+	if providerID == "" || node.Attrs["id"] != providerID {
+		return nil
+	}
+	if node.Attrs["type"] == "error" {
+		return fmt.Errorf("WA text message was rejected")
+	}
+	if node.Tag == "failure" || node.Tag == "error" {
+		return fmt.Errorf("WA text message was rejected")
+	}
+	if errorNode, ok := chatdChild(node, "error"); ok {
+		if code := strings.TrimSpace(errorNode.Attrs["code"]); code != "" {
+			return fmt.Errorf("WA text message was rejected: code %s", safeResponseSnippet(code))
+		}
+		return fmt.Errorf("WA text message was rejected")
+	}
+	return nil
 }
 
 func textMessageSendTimeout(timeout time.Duration) time.Duration {

@@ -65,7 +65,11 @@ func (s *Server) SendTextMessage(ctx context.Context, req *waappv1.SendTextMessa
 	if sentAt.IsZero() {
 		sentAt = s.clock.Now()
 	}
-	if err := s.saveOutboundTextMessage(ctx, loginState, contactJID, providerID, text, sentAt); err != nil {
+	ackStatus := result.AckStatus
+	if ackStatus == waappv1.MessageAckStatus_MESSAGE_ACK_STATUS_UNSPECIFIED {
+		ackStatus = waappv1.MessageAckStatus_MESSAGE_ACK_STATUS_PENDING
+	}
+	if err := s.saveOutboundTextMessage(ctx, loginState, contactJID, providerID, text, sentAt, ackStatus); err != nil {
 		return &waappv1.SendTextMessageResponse{ProviderMessageId: providerID, SentAt: timestamppb.New(sentAt.UTC()), Error: ToProtoError(err)}, nil
 	}
 	return &waappv1.SendTextMessageResponse{ProviderMessageId: providerID, SentAt: timestamppb.New(sentAt.UTC())}, nil
@@ -109,7 +113,7 @@ func (s *Server) textMessageRunner(ctx context.Context, requestContext *waappv1.
 	return proxied, release, nil
 }
 
-func (s *Server) saveOutboundTextMessage(ctx context.Context, loginState *waappv1.LoginState, contactJID string, providerID string, text string, sentAt time.Time) error {
+func (s *Server) saveOutboundTextMessage(ctx context.Context, loginState *waappv1.LoginState, contactJID string, providerID string, text string, sentAt time.Time, ackStatus waappv1.MessageAckStatus) error {
 	session, err := s.outboundMessageSession(ctx, loginState, sentAt)
 	if err != nil {
 		return err
@@ -120,7 +124,7 @@ func (s *Server) saveOutboundTextMessage(ctx context.Context, loginState *waappv
 		MessageSessionId:  session.GetMessageSessionId(),
 		Kind:              waappv1.InboundMessageKind_INBOUND_MESSAGE_KIND_MESSAGE,
 		EncryptionState:   waappv1.MessageEncryptionState_MESSAGE_ENCRYPTION_STATE_DECRYPTED,
-		AckStatus:         waappv1.MessageAckStatus_MESSAGE_ACK_STATUS_PENDING,
+		AckStatus:         ackStatus,
 		ContactRef:        contactJID,
 		PayloadRef:        "outbound:" + providerID,
 		ProviderMessageId: providerID,

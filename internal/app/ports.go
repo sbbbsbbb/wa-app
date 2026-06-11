@@ -264,6 +264,7 @@ type EngineTextMessageInput struct {
 type EngineTextMessageResult struct {
 	ProviderMessageID string
 	SentAt            time.Time
+	AckStatus         waappv1.MessageAckStatus
 	Err               error
 }
 
