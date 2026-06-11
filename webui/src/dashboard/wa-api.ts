@@ -110,8 +110,8 @@ export function submitWaRegistrationOTP(account: WAAccount | string, otp: string
   return api<WaWorkflowResponse>('/api/wa/actions/registration/resume-otp', { method: 'POST', body: JSON.stringify({ wa_account_id: accountID, otp }) });
 }
 
-export async function setWaTwoFactorAuthSettings(account: WAAccount, input: { pin: string; recovery_email?: string }) {
-  return requireAccountSettingsResponse(await api<SetTwoFactorAuthSettingsResponse>('/api/wa/account-settings/2fa', { method: 'POST', body: JSON.stringify({ ...waAccountSettingsPayload(account), pin: input.pin, recovery_email: input.recovery_email || '' }) }));
+export async function setWaTwoFactorAuthSettings(account: WAAccount, pin: string) {
+  return requireAccountSettingsResponse(await api<SetTwoFactorAuthSettingsResponse>('/api/wa/account-settings/2fa', { method: 'POST', body: JSON.stringify({ ...waAccountSettingsPayload(account), pin }) }));
 }
 export async function setWaAccountEmail(account: WAAccount, input: { email_address: string; google_id_token?: string }) {
   return requireAccountSettingsResponse(await api<SetAccountEmailResponse>('/api/wa/account-settings/email', { method: 'POST', body: JSON.stringify({ ...waAccountSettingsPayload(account), email_address: input.email_address, google_id_token: input.google_id_token || '' }) }));

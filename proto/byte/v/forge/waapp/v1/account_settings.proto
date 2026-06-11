@@ -70,7 +70,6 @@ message SetTwoFactorAuthSettingsRequest {
   AccountLoginSelector selector = 2;
   // Sensitive. Do not log, persist, or emit outside the authorized account settings operation.
   SensitiveText pin = 3;
-  string recovery_email = 4;
 }
 
 message SetTwoFactorAuthSettingsResponse {

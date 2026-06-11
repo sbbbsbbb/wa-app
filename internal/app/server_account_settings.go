@@ -26,13 +26,8 @@ func (s *Server) SetTwoFactorAuthSettings(ctx context.Context, req *waappv1.SetT
 	if err != nil {
 		return &waappv1.SetTwoFactorAuthSettingsResponse{Error: ToProtoError(err)}, nil
 	}
-	recoveryEmail, err := optionalEmailAddress(req.GetRecoveryEmail(), "recovery_email")
-	if err != nil {
-		return &waappv1.SetTwoFactorAuthSettingsResponse{Error: ToProtoError(err)}, nil
-	}
 	op, err := s.applyAccountSettings(ctx, req.GetContext(), req.GetSelector(), waappv1.AccountSettingsOperationKind_ACCOUNT_SETTINGS_OPERATION_KIND_TWO_FACTOR_AUTH_SETTINGS, func(input EngineAccountSettingsInput) EngineAccountSettingsInput {
 		input.Pin = pin
-		input.RecoveryEmail = recoveryEmail
 		return input
 	})
 	if err != nil {

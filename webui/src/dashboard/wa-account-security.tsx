@@ -10,14 +10,13 @@ type Props = { account: WaAccountProjection; onDone: (message: string) => void; 
 
 export function WaAccountSecurityPanel({ account, onDone, onError }: Props) {
   const [pin, setPin] = useState('');
-  const [recoveryEmail, setRecoveryEmail] = useState('');
   const [email, setEmail] = useState('');
   const [idToken, setIdToken] = useState('');
   const [emailOtp, setEmailOtp] = useState('');
   const [lastStatus, setLastStatus] = useState<AccountSettingsOperationStatus | undefined>();
   const handleError = (error: unknown) => onError(error instanceof Error ? error.message : String(error));
   const handleSuccess = (message: string, status?: AccountSettingsOperationStatus) => { setLastStatus(status); onDone(message); };
-  const twoFactor = useMutation({ mutationFn: () => setWaTwoFactorAuthSettings(account, { pin, recovery_email: recoveryEmail }), onSuccess: (resp) => { setPin(''); handleSuccess('2FA PIN 设置请求已提交', resp.operation?.status); }, onError: handleError });
+  const twoFactor = useMutation({ mutationFn: () => setWaTwoFactorAuthSettings(account, pin), onSuccess: (resp) => { setPin(''); handleSuccess('2FA PIN 设置请求已提交', resp.operation?.status); }, onError: handleError });
   const emailSet = useMutation({ mutationFn: () => setWaAccountEmail(account, { email_address: email, google_id_token: idToken }), onSuccess: (resp) => { setIdToken(''); handleSuccess('账户邮箱设置请求已提交', resp.operation?.status); }, onError: handleError });
   const otpRequest = useMutation({ mutationFn: () => requestWaAccountEmailOtp(account), onSuccess: (resp) => handleSuccess('邮箱 OTP 已请求', resp.operation?.status), onError: handleError });
   const otpVerify = useMutation({ mutationFn: () => verifyWaAccountEmailOtp(account, emailOtp), onSuccess: (resp) => { setEmailOtp(''); handleSuccess('邮箱 OTP 校验请求已提交', resp.operation?.status); }, onError: handleError });
@@ -28,7 +27,7 @@ export function WaAccountSecurityPanel({ account, onDone, onError }: Props) {
       <div className="grid gap-6 lg:grid-cols-2">
         <form className="grid gap-3" onSubmit={(event) => submit(event, twoFactor.mutate)}>
           <div className="inline-flex items-center gap-2 text-sm font-medium"><ShieldCheck size={15} />设置 2FA PIN</div>
-          <FieldGroup><Field><FieldLabel>6 位 PIN</FieldLabel><Input value={pin} onChange={(event) => setPin(event.target.value)} inputMode="numeric" autoComplete="one-time-code" type="password" maxLength={6} disabled={busy} /></Field><Field><FieldLabel>恢复邮箱</FieldLabel><Input value={recoveryEmail} onChange={(event) => setRecoveryEmail(event.target.value)} type="email" placeholder="可选" disabled={busy} /></Field><Button type="submit" disabled={busy || pin.length !== 6}><KeyRound size={14} />提交 PIN</Button></FieldGroup>
+          <FieldGroup><Field><FieldLabel>6 位 PIN</FieldLabel><Input value={pin} onChange={(event) => setPin(event.target.value)} inputMode="numeric" autoComplete="one-time-code" type="password" maxLength={6} disabled={busy} /></Field><Button type="submit" disabled={busy || pin.length !== 6}><KeyRound size={14} />提交 PIN</Button></FieldGroup>
         </form>
         <form className="grid gap-3" onSubmit={(event) => submit(event, emailSet.mutate)}>
           <div className="inline-flex items-center gap-2 text-sm font-medium"><Mail size={15} />设置账户邮箱</div>

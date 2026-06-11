@@ -150,7 +150,6 @@ type EngineAccountSettingsInput struct {
 	LoginStateID         string
 	Kind                 waappv1.AccountSettingsOperationKind
 	Pin                  string
-	RecoveryEmail        string
 	EmailAddress         string
 	GoogleIDToken        string
 	LocaleLanguage       string

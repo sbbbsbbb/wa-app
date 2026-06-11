@@ -15,10 +15,9 @@ func (s *dashboardHTTP) handleSetTwoFactorAuthSettings(w http.ResponseWriter, r 
 		return
 	}
 	resp, err := s.service.SetTwoFactorAuthSettings(r.Context(), &waappv1.SetTwoFactorAuthSettingsRequest{
-		Context:       accountSettingsRequestContext(payload, "wa-account-2fa"),
-		Selector:      accountSettingsSelector(payload),
-		Pin:           &waappv1.SensitiveText{Value: textField(payload, "pin")},
-		RecoveryEmail: textField(payload, "recovery_email"),
+		Context:  accountSettingsRequestContext(payload, "wa-account-2fa"),
+		Selector: accountSettingsSelector(payload),
+		Pin:      &waappv1.SensitiveText{Value: textField(payload, "pin")},
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "set WA 2FA settings failed"})

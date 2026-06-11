@@ -68,7 +68,7 @@ func (e *NativeEngine) applyAccountProfileName(ctx context.Context, input Engine
 func buildAccountSettingsIQ(id string, input EngineAccountSettingsInput) chatdNode {
 	switch input.Kind {
 	case waappv1.AccountSettingsOperationKind_ACCOUNT_SETTINGS_OPERATION_KIND_TWO_FACTOR_AUTH_SETTINGS:
-		return buildTwoFactorAuthSettingsIQ(id, input.Pin, input.RecoveryEmail)
+		return buildTwoFactorAuthSettingsIQ(id, input.Pin)
 	case waappv1.AccountSettingsOperationKind_ACCOUNT_SETTINGS_OPERATION_KIND_ACCOUNT_EMAIL_SET:
 		return buildSetAccountEmailIQ(id, input.EmailAddress, input.GoogleIDToken)
 	case waappv1.AccountSettingsOperationKind_ACCOUNT_SETTINGS_OPERATION_KIND_ACCOUNT_EMAIL_OTP_REQUEST:
@@ -88,12 +88,8 @@ func buildAccountIQ(id string, iqType string, children []chatdNode) chatdNode {
 	return chatdNode{Tag: "iq", Attrs: map[string]string{"to": "s.whatsapp.net", "id": id, "xmlns": "urn:xmpp:whatsapp:account", "type": iqType}, Content: children}
 }
 
-func buildTwoFactorAuthSettingsIQ(id string, pin string, recoveryEmail string) chatdNode {
-	children := []chatdNode{{Tag: "code", Content: pin}}
-	if strings.TrimSpace(recoveryEmail) != "" {
-		children = append(children, chatdNode{Tag: "email", Content: recoveryEmail})
-	}
-	return buildAccountIQ(id, "set", []chatdNode{{Tag: "2fa", Content: children}})
+func buildTwoFactorAuthSettingsIQ(id string, pin string) chatdNode {
+	return buildAccountIQ(id, "set", []chatdNode{{Tag: "2fa", Content: []chatdNode{{Tag: "code", Content: pin}}}})
 }
 
 func buildSetAccountEmailIQ(id string, emailAddress string, googleIDToken string) chatdNode {
