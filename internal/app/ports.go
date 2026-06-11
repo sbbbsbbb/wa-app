@@ -214,6 +214,8 @@ type EngineCodeResult struct {
 	ExpectedCodeLength int32
 	ExpiresAt          time.Time
 	RetryAfter         time.Duration
+	RawStatus          string
+	RawReason          string
 	Err                error
 }
 

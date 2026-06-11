@@ -6,7 +6,9 @@ import { WhatsAppIcon } from './wa-brand-icon';
 import { WaContactAvatar } from './wa-contact-avatar';
 import { toAssistantMessage, type WaChatEvent, type WaChatMeta, type WaContact } from './wa-chat-model';
 import { WaMessageContent } from './wa-message-content';
-import { Badge, Button, Input } from './ui';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 export function WaChatThread({ contact, events, loading, sending, error, onSendMessage }: { contact?: WaContact; events: WaChatEvent[]; loading: boolean; sending: boolean; error?: string; onSendMessage: (text: string) => Promise<unknown> }) {
   const runtime = useExternalStoreRuntime<WaChatEvent>({ messages: events, convertMessage: toAssistantMessage, isDisabled: true, isLoading: loading, onNew: noopNewMessage });

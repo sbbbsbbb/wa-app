@@ -1,11 +1,16 @@
 import { useState } from 'react';
 import { CheckCircle2, KeyRound, Search, ShieldAlert } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
 import { probeWaPhoneSMS, registerWaPhone, submitWaRegistrationOTP, type WaWorkflowResponse } from './wa-api';
 import { WhatsAppIcon } from './wa-brand-icon';
 import { waProbeCanStartRegistration, waProbeStatus } from './wa-result-model';
 import { WaResultPanel } from './wa-result-panel';
 import { resolveWaPhoneTarget, type WaResolvedPhone } from './wa-utils';
-import { Alert, AlertDescription, AlertTitle, Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Field, FieldDescription, FieldGroup, FieldLabel, Input } from './ui';
 
 type ProbeState = { target: WaResolvedPhone; result: WaWorkflowResponse } | null;
 type PendingRegistration = { target: WaResolvedPhone; accountID: string; verificationRequestID: string };
@@ -49,8 +54,7 @@ export function WaAccountAdd({ disabled, onChanged, onDone, onError }: Props) {
         setRegistrationResult(result);
         setRegistrationTarget(resolved.target);
         if (result.success === false || result.error_message || resultStatus.blocked === true || resultStatus.requestFailed) {
-          const message = resultStatus.blocked ? '号码被 WA 拒绝/封禁，先停止重试，建议更换号码或注册通道。' : result.error_message || result.status || 'WA 注册流程发起失败';
-          onError(message);
+          onError(registrationFailureMessage(result, resultStatus));
           return;
         }
         const accountID = workflowText(result, 'wa_account_id');
@@ -154,4 +158,12 @@ function probeMatchesValues(probe: ProbeState, phone: string, countryCallingCode
 function workflowText(result: WaWorkflowResponse, key: keyof WaWorkflowResponse) {
   const value = result[key];
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function registrationFailureMessage(result: WaWorkflowResponse, status: ReturnType<typeof waProbeStatus>) {
+  const detail = status.failureReason || result.error_message || result.status || '';
+  if (status.blocked) return '号码被 WA 拒绝/封禁，先停止重试，建议更换号码或注册通道。';
+  if (status.accountFlow === 'invalid_number') return detail ? `号码格式被 WA 拒绝：${detail}` : '号码格式被 WA 拒绝，请检查国家拨号码和手机号。';
+  if (status.accountFlow === 'rate_limited') return detail ? `WA 注册请求处于冷却：${detail}` : 'WA 注册请求处于冷却，请稍后再试。';
+  return detail || 'WA 注册流程发起失败';
 }

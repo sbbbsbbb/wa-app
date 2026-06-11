@@ -1,22 +1,59 @@
 import type { WaWorkflowResponse } from './wa-api';
 import { booleanLabel, methodStateLabel, oldDeviceLabel, smsLabel } from './wa-result-labels';
-import { metaItems, outcomeMeta, waProbeStatus, type WaProbeStatus } from './wa-result-model';
-import { ResultSummaryPanel, type ResultTone } from './ui';
+import { metaItems, outcomeMeta, waProbeStatus, type BadgeVariant, type ResultTone, type WaProbeStatus } from './wa-result-model';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
 
 export function WaResultPanel({ title, phone, result, loading }: { title: string; phone?: string; result?: WaWorkflowResponse | null; loading?: boolean }) {
   const status = waProbeStatus(result);
   const outcome = outcomeMeta(status, result, loading);
+  const methods = status.methodStatuses.map((method) => ({ key: method.key, label: method.label, state: methodStateLabel(method.available, method.cooldownSeconds) }));
+  const meta = metaItems(status, result);
   return (
-    <ResultSummaryPanel
-      title={title}
-      subject={phone}
-      badge={{ label: outcome.label, variant: outcome.variant }}
-      metrics={waMetrics(status).map((item) => ({ id: item.label, ...item }))}
-      methods={status.methodStatuses.map((method) => ({ key: method.key, label: method.label, state: methodStateLabel(method.available, method.cooldownSeconds) }))}
-      meta={metaItems(status, result).map((item) => ({ id: item.label, ...item }))}
-      metaLayout="grid"
-    />
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <span className="shrink-0 text-xs font-medium">{title}</span>
+          <span className="truncate font-mono text-[11px] text-muted-foreground">{phone || '-'}</span>
+        </div>
+        <Badge variant={badgeVariant(outcome.variant)}>{outcome.label}</Badge>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {waMetrics(status).map((item) => <MetricChip key={item.label} {...item} />)}
+      </div>
+      {(methods.length > 0 || meta.length > 0) && (
+        <Card className="grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-background/70 px-2.5 py-1.5 text-[11px] shadow-none">
+          {methods.map((method) => <GridMeta key={method.key} label={method.label} value={method.state} />)}
+          {meta.map((item) => <GridMeta key={item.label} label={item.label} value={item.value} tone={item.tone} />)}
+        </Card>
+      )}
+    </div>
   );
+}
+
+function MetricChip({ label, value, tone }: { label: string; value: string; tone: ResultTone }) {
+  return <span className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] ${toneClass(tone, true)}`}><span className="text-muted-foreground">{label}</span><span className="font-semibold">{value}</span></span>;
+}
+
+function GridMeta({ label, value, tone = 'idle' }: { label: string; value: string; tone?: ResultTone }) {
+  return <div className="min-w-0"><span className="mr-1 text-muted-foreground">{label}</span><span className={`break-words font-medium ${toneClass(tone)}`}>{value}</span></div>;
+}
+
+function badgeVariant(variant: BadgeVariant) {
+  return variant === 'default' ? 'default' : variant;
+}
+
+function toneClass(tone: ResultTone = 'idle', chip = false) {
+  if (chip) {
+    if (tone === 'ok') return 'border-primary/30 bg-primary/5 text-primary';
+    if (tone === 'bad') return 'border-destructive/30 bg-destructive/5 text-destructive';
+    if (tone === 'warn') return 'border-amber-500/30 bg-amber-500/5 text-amber-700';
+    return 'bg-muted/30 text-muted-foreground';
+  }
+  if (tone === 'ok') return 'text-primary';
+  if (tone === 'bad') return 'text-destructive';
+  if (tone === 'warn') return 'text-amber-600';
+  return 'text-muted-foreground';
 }
 
 function waMetrics(status: WaProbeStatus): Array<{ label: string; value: string; tone: ResultTone }> {

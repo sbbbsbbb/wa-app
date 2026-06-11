@@ -6,7 +6,8 @@ import { submitWaRegistrationOTP, waAccountID } from './wa-api';
 import { WaAccountProfileSettings } from './wa-account-profile-settings';
 import { WaAccountSecurityPanel } from './wa-account-security';
 import { WaDeviceFingerprintPanel } from './wa-device-fingerprint';
-import { Button, Input } from './ui';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 type Props = {
   account: WAAccount;

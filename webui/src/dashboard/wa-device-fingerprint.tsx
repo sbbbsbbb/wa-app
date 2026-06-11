@@ -1,7 +1,7 @@
 import { Cpu, Fingerprint, Loader2, Smartphone } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { ClientProfile, DeviceFingerprint } from '../proto/byte/v/forge/waapp/v1/profile';
-import { Badge } from './ui';
+import { Badge } from '@/components/ui/badge';
 
 export function WaDeviceFingerprintPanel({ profiles, loading }: { profiles: ClientProfile[]; loading: boolean }) {
   if (loading) return <p className="inline-flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />加载设备指纹...</p>;

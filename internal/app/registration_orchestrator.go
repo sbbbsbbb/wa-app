@@ -119,7 +119,7 @@ func registrationPhase(success bool, verificationRequestID string, retryAfter ti
 }
 
 func verificationCodeRequestAccepted(result EngineCodeResult) bool {
-	return result.Err == nil && result.Status == waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_SENT
+	return result.Err == nil && (result.Status == waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_SENT || result.Status == waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_WAITING)
 }
 
 func registrationProbeAllowsSMS(result EngineProbeResult) bool {
@@ -127,19 +127,83 @@ func registrationProbeAllowsSMS(result EngineProbeResult) bool {
 }
 
 func registrationRequestFailureMap(result EngineCodeResult, route DynamicProxyRoute, managedRoute bool) map[string]any {
-	protoErr := ToProtoError(result.Err)
-	response := map[string]any{
-		"success":       false,
-		"status":        firstNonEmpty(result.Status.String(), "VERIFICATION_REQUEST_STATUS_REJECTED"),
-		"error":         protoMap(protoErr),
-		"error_message": protoErr.GetMessage(),
-		"proxy":         registrationProxyRouteMap(route, managedRoute),
+	err := result.Err
+	if err == nil {
+		err = registrationCodeRequestError(result)
 	}
-	if seconds := int64(result.RetryAfter / time.Second); seconds > 0 {
+	protoErr := ToProtoError(err)
+	seconds := int64(result.RetryAfter / time.Second)
+	accountFlow := registrationCodeRequestFlow(result, protoErr)
+	response := map[string]any{
+		"success":        false,
+		"request_failed": true,
+		"status":         firstNonEmpty(result.Status.String(), "VERIFICATION_REQUEST_STATUS_REJECTED"),
+		"error":          protoMap(protoErr),
+		"error_message":  protoErr.GetMessage(),
+		"reject_reason":  registrationRejectReason(protoErr.GetMessage()),
+		"proxy":          registrationProxyRouteMap(route, managedRoute),
+		"sms_probe": map[string]any{
+			"status":              result.Status.String(),
+			"raw_status":          result.RawStatus,
+			"raw_reason":          result.RawReason,
+			"retry_after_seconds": seconds,
+		},
+		"phone_status": map[string]any{
+			"account_status":       waappv1.AccountProbeStatus_ACCOUNT_PROBE_STATUS_REJECTED.String(),
+			"account_flow":         accountFlow,
+			"account_raw_status":   result.RawStatus,
+			"account_raw_reason":   result.RawReason,
+			"account_error":        protoErr.GetMessage(),
+			"account_reachable":    false,
+			"request_failed":       true,
+			"blocked":              accountFlow == accountProbeFlowBlocked,
+			"sms_status":           result.Status.String(),
+			"sms_available":        false,
+			"sms_wait_seconds":     seconds,
+			"reject_reason":        protoErr.GetMessage(),
+			"can_register":         false,
+			"registration_phase":   "OTP_REQUEST_FAILED",
+			"verification_status":  result.Status.String(),
+			"verification_reason":  result.RawReason,
+			"verification_outcome": result.RawStatus,
+		},
+	}
+	if seconds > 0 {
 		response["retry_after_seconds"] = seconds
 		response["registration_phase"] = "OTP_COOLDOWN"
 	}
 	return response
+}
+
+func registrationCodeRequestError(result EngineCodeResult) error {
+	switch {
+	case result.RetryAfter > 0 || existRateLimitedReason(result.RawReason):
+		return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_RATE_LIMITED, "verification request is cooling down", true)
+	case existInvalidNumberReason(result.RawReason):
+		return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_REJECTED, "verification request rejected: phone format is invalid", false)
+	case strings.EqualFold(result.RawReason, "no_routes") || strings.EqualFold(result.RawStatus, "no_routes"):
+		return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "no_routes: verification route is unavailable", false)
+	case strings.TrimSpace(result.RawReason) != "":
+		return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_REJECTED, "verification request was rejected: reason="+result.RawReason, false)
+	case strings.TrimSpace(result.RawStatus) != "":
+		return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_REJECTED, "verification request was rejected: status="+result.RawStatus, false)
+	default:
+		return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_REJECTED, "verification request was rejected", false)
+	}
+}
+
+func registrationCodeRequestFlow(result EngineCodeResult, protoErr *waappv1.WaError) string {
+	raw := strings.ToLower(strings.TrimSpace(result.RawReason + " " + result.RawStatus + " " + protoErr.GetMessage()))
+	switch {
+	case existInvalidNumberReason(raw) || strings.Contains(raw, "format_wrong") || strings.Contains(raw, "length_short") || strings.Contains(raw, "length_long"):
+		return accountProbeFlowInvalidNumber
+	case existRateLimitedReason(raw) || strings.Contains(raw, "cooling down"):
+		return accountProbeFlowRateLimited
+	case strings.Contains(raw, "blocked"):
+		return accountProbeFlowBlocked
+	default:
+		return accountProbeFlowProbeFailed
+	}
 }
 
 func registrationProbeFailureMap(result EngineProbeResult, route DynamicProxyRoute, managedRoute bool) map[string]any {
@@ -239,6 +303,9 @@ func rejectedRegistrationResult(basePayload map[string]any, requested map[string
 
 func registrationRejectReason(errorMessage string) string {
 	normalized := strings.ToLower(errorMessage)
+	if strings.Contains(normalized, "format_wrong") || strings.Contains(normalized, "length_short") || strings.Contains(normalized, "length_long") || strings.Contains(normalized, "phone format") {
+		return "invalid_number"
+	}
 	if strings.Contains(normalized, "too_recent") || strings.Contains(normalized, "too_many") || strings.Contains(normalized, "temporarily_unavailable") || strings.Contains(normalized, "cooldown") || strings.Contains(normalized, "cooling down") {
 		return "rate_limited"
 	}

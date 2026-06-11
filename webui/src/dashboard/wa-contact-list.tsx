@@ -7,7 +7,9 @@ import type { WaContact } from './wa-chat-model';
 import { formatChatTime } from './wa-chat-model';
 import { WaContactAvatar } from './wa-contact-avatar';
 import { waContactPath } from './wa-route-paths';
-import { Badge, Button, Input } from './ui';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 export function WaContactList({ accountID, contacts, selectedID, loading, error, deletingID, onOpenContact, onDeleteContact }: { accountID: string; contacts: WaContact[]; selectedID: string; loading: boolean; error?: string; deletingID?: string; onOpenContact: (contactID: string) => void; onDeleteContact: (contactID: string) => void }) {
   const [query, setQuery] = useState('');

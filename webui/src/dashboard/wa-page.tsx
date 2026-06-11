@@ -2,7 +2,11 @@ import { useMemo, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate, Outlet, useMatches, useNavigate, useOutletContext, useParams } from 'react-router';
-import { Plus } from 'lucide-react';
+import { toast } from 'sonner';
+import { Loader2, Plus } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
+import { Toaster } from '@/components/ui/sonner';
 import type { LongConnectionState } from '../proto/byte/v/forge/waapp/v1/messaging';
 import type { WAAccount } from '../proto/byte/v/forge/waapp/v1/profile';
 import { deleteWaAccount, getWaAccounts, getWaClientProfiles, waAccountID, waKeys } from './wa-api';
@@ -13,7 +17,6 @@ import { WhatsAppIcon } from './wa-brand-icon';
 import { WaInbox } from './wa-inbox';
 import { useWaLongConnectionIndex } from './wa-long-connection-badge';
 import { waChatsPath } from './wa-route-paths';
-import { Button, LoadingText, SidebarInset, SidebarProvider, ToastMessage, useToastMessage } from './ui';
 
 type WaRouteContext = { accounts: WAAccount[]; accountsLoading: boolean; connections: Map<string, LongConnectionState>; deleting: boolean; refreshAccounts: () => Promise<void>; refreshAccountAvatars: () => void; deleteAccount: (account: WAAccount) => void; done: (message: string) => void; error: (message: string) => void };
 
@@ -21,7 +24,6 @@ const emptyAccounts: WAAccount[] = [];
 const accountSidebarStyle = { '--sidebar-width': '15rem', '--sidebar-width-icon': '4rem' } as CSSProperties;
 
 export function WaLayout() {
-  const toast = useToastMessage();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [accountAvatarVersion, setAccountAvatarVersion] = useState(() => String(Date.now()));
@@ -30,17 +32,17 @@ export function WaLayout() {
   const connections = useWaLongConnectionIndex();
   const accounts = useMemo(() => accountsQuery.data?.pages.flatMap((page) => page.accounts || []) || emptyAccounts, [accountsQuery.data]);
   const selectedID = useSelectedAccountID(accounts);
-  const deletion = useMutation({ mutationFn: deleteWaAccount, onSuccess: async () => { toast.showOK('账号已删除'); await refreshAccounts(); navigate('/', { replace: true }); }, onError: toast.showError });
+  const deletion = useMutation({ mutationFn: deleteWaAccount, onSuccess: async () => { toast.success('账号已删除'); await refreshAccounts(); navigate('/', { replace: true }); }, onError: showErrorToast });
   async function refreshAccounts() {
     await queryClient.invalidateQueries({ queryKey: waKeys.accounts() });
   }
   const refreshAccountAvatars = () => setAccountAvatarVersion(String(Date.now()));
-  const context: WaRouteContext = { accounts, accountsLoading: accountsQuery.isLoading, connections: connections.byAccount, deleting: deletion.isPending, refreshAccounts, refreshAccountAvatars, deleteAccount: deletion.mutate, done: toast.showOK, error: toast.showError };
+  const context: WaRouteContext = { accounts, accountsLoading: accountsQuery.isLoading, connections: connections.byAccount, deleting: deletion.isPending, refreshAccounts, refreshAccountAvatars, deleteAccount: deletion.mutate, done: toast.success, error: showErrorToast };
   return (
     <SidebarProvider open={accountRailExpanded} onOpenChange={setAccountRailExpanded} style={accountSidebarStyle} className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
       <WaAccountRail accounts={accounts} selectedID={selectedID} avatarVersion={accountAvatarVersion} connections={connections.byAccount} loading={accountsQuery.isLoading} connectionsLoading={connections.loading} hasNextPage={Boolean(accountsQuery.hasNextPage)} loadingMore={accountsQuery.isFetchingNextPage} onLoadMore={() => { void accountsQuery.fetchNextPage(); }} />
       <SidebarInset className="h-dvh min-w-0 overflow-hidden"><Outlet context={context} /></SidebarInset>
-      <ToastMessage toast={toast.toast} />
+      <Toaster richColors closeButton />
     </SidebarProvider>
   );
 }
@@ -107,6 +109,14 @@ function PageShell({ title, children }: { title: string; children: ReactNode }) 
 
 function PageCenter({ children }: { children: ReactNode }) {
   return <section className="grid h-dvh place-items-center bg-background p-8">{children}</section>;
+}
+
+function LoadingText({ children }: { children: ReactNode }) {
+  return <span className="inline-flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{children}</span>;
+}
+
+function showErrorToast(error: unknown) {
+  toast.error(error instanceof Error ? error.message : String(error));
 }
 
 export function WaNotFoundRoute() {

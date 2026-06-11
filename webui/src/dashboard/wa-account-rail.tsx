@@ -2,18 +2,9 @@ import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Info, Loader2, Plus } from 'lucide-react';
 import { Link, NavLink } from 'react-router';
-import type { LongConnectionState } from '../proto/byte/v/forge/waapp/v1/messaging';
-import type { WAAccount } from '../proto/byte/v/forge/waapp/v1/profile';
-import { waAccountID } from './wa-api';
-import { WaAccountAvatar } from './wa-account-avatar';
-import { WaConnectionDot } from './wa-connection-dot';
-import { waAccountPath, waChatsPath } from './wa-route-paths';
+import { Button } from '@/components/ui/button';
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty';
 import {
-  Button,
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
   Sidebar,
   SidebarContent,
   SidebarFooter,
@@ -29,7 +20,13 @@ import {
   SidebarSeparator,
   SidebarTrigger,
   useSidebar,
-} from './ui';
+} from '@/components/ui/sidebar';
+import type { LongConnectionState } from '../proto/byte/v/forge/waapp/v1/messaging';
+import type { WAAccount } from '../proto/byte/v/forge/waapp/v1/profile';
+import { waAccountID } from './wa-api';
+import { WaAccountAvatar } from './wa-account-avatar';
+import { WaConnectionDot } from './wa-connection-dot';
+import { waAccountPath, waChatsPath } from './wa-route-paths';
 
 type RailProps = { accounts: WAAccount[]; selectedID: string; avatarVersion: string; connections: Map<string, LongConnectionState>; loading: boolean; connectionsLoading: boolean; hasNextPage: boolean; loadingMore: boolean; onLoadMore: () => void };
 type AccountItemProps = { account: WAAccount; selected: boolean; avatarVersion: string; connection?: LongConnectionState; loading: boolean };

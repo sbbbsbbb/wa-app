@@ -1,8 +1,10 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Badge } from '@/components/ui/badge';
 import { LongConnectionStatus, type LongConnectionState } from '../proto/byte/v/forge/waapp/v1/messaging';
 import { getWaConnections, waKeys } from './wa-api';
-import { Badge, type BadgeVariant } from './ui';
+
+type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline';
 
 export function useWaLongConnectionIndex() {
   const query = useQuery({ queryKey: waKeys.connections(), queryFn: () => getWaConnections(), refetchInterval: 5000 });

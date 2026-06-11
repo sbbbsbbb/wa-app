@@ -17,7 +17,10 @@ import {
   twoFactorEmailConfigured,
   twoFactorStatusLabel,
 } from './wa-account-security-model';
-import { Badge, Button, Field, FieldGroup, FieldLabel, Input } from './ui';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
 
 type Props = { account: WaAccountProjection; onDone: (message: string) => void; onError: (message: string) => void };
 

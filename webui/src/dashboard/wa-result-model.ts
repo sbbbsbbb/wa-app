@@ -1,8 +1,8 @@
-import type { ResultTone } from './ui';
 import type { WaWorkflowResponse } from './wa-api';
 import { methodLabel, methodLabels } from './wa-result-labels';
 import { compactJoin, extraValues, firstBool, firstNumber, firstText, record, statusIn } from './wa-result-normalize';
 export type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline';
+export type ResultTone = 'ok' | 'warn' | 'bad' | 'idle';
 export type VerificationMethodStatus = { key: string; label: string; available?: boolean; cooldownSeconds: number | null };
 export type WaProbeStatus = {
   requestFailed: boolean;
@@ -60,9 +60,9 @@ export function outcomeMeta(status: WaProbeStatus, result?: WaWorkflowResponse |
   if (loading) return { label: '执行中', variant: 'secondary' };
   if (!result) return { label: '等待', variant: 'outline' };
   if (status.blocked === true) return { label: '已封禁', variant: 'destructive' };
-  if (status.requestFailed) return { label: '请求失败', variant: 'destructive' };
   if (status.accountFlow === 'invalid_number') return { label: '号码异常', variant: 'secondary' };
   if (status.accountFlow === 'rate_limited') return { label: '限流', variant: 'secondary' };
+  if (status.requestFailed) return { label: '请求失败', variant: 'destructive' };
   if (status.registered === true || status.accountFlow === 'registered') return { label: '旧设备可用', variant: 'secondary' };
   if (status.smsAvailable === true) return { label: 'SMS 可发', variant: 'default' };
   if (status.smsAvailable === false) return { label: 'SMS 不可发', variant: 'secondary' };

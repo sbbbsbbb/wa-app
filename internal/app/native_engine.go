@@ -149,7 +149,7 @@ func (e *NativeEngine) requestVerificationCodeWithState(ctx context.Context, inp
 		if verificationCodeRateLimited(data) {
 			return verificationCodeRejectedResult(data, now, retryAfter, "verification request is cooling down"), state
 		}
-		return EngineCodeResult{Status: waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_REJECTED, Err: classifyHTTPError(data, err)}, state
+		return EngineCodeResult{Status: waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_REJECTED, RawStatus: responseStatus(data), RawReason: responseReason(data), Err: classifyHTTPError(data, err)}, state
 	}
 	status := waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_WAITING
 	s := responseStatus(data)
@@ -158,7 +158,7 @@ func (e *NativeEngine) requestVerificationCodeWithState(ctx context.Context, inp
 	} else if verificationCodeRateLimited(data) {
 		return verificationCodeRejectedResult(data, now, retryAfter, "verification request is cooling down"), state
 	} else if s != "" {
-		return EngineCodeResult{Status: waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_REJECTED, Err: waProtocolError(data, "verification request was rejected")}, state
+		return EngineCodeResult{Status: waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_REJECTED, RawStatus: responseStatus(data), RawReason: responseReason(data), Err: waProtocolError(data, "verification request was rejected")}, state
 	}
 	return verificationCodeResult(status, data, now, retryAfter), state
 }
@@ -706,6 +706,8 @@ func verificationCodeResult(status waappv1.VerificationRequestStatus, data map[s
 		ExpectedCodeLength: int32(jsonNumber(data["length"])),
 		ExpiresAt:          now.Add(10 * time.Minute),
 		RetryAfter:         retryAfter,
+		RawStatus:          responseStatus(data),
+		RawReason:          responseReason(data),
 	}
 }
 
@@ -715,6 +717,8 @@ func verificationCodeRejectedResult(data map[string]any, now time.Time, retryAft
 		ExpectedCodeLength: int32(jsonNumber(data["length"])),
 		ExpiresAt:          now.Add(10 * time.Minute),
 		RetryAfter:         retryAfter,
+		RawStatus:          responseStatus(data),
+		RawReason:          responseReason(data),
 		Err:                waProtocolError(data, fallback),
 	}
 }

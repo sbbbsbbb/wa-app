@@ -49,11 +49,15 @@ PostgreSQL 和 Redis 都是可选组件。需要启用时，在 `docker-compose.
 
 ### 源码构建镜像
 
-`Dockerfile` 使用 `byte-v-forge` 聚合目录作为构建上下文，需要同级存在 `common-lib/` 和 `wa-app/`：
+`Dockerfile` 支持在 `wa-app` 仓库内直接构建，不依赖 `common-lib` 构建上下文：
 
 ```sh
-cd ..
-git clone https://github.com/byte-v-forge/common-lib.git common-lib
+docker build -t wa-app-service:local .
+```
+
+在 `byte-v-forge` 聚合目录构建也可用：
+
+```sh
 docker build -f wa-app/Dockerfile -t wa-app-service:local .
 ```
 

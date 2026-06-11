@@ -182,9 +182,12 @@ func buildNumberProbeResult(input map[string]any, proxy map[string]any, fingerpr
 	smsWaitSeconds := firstNumberValue(sms, "sms_wait_seconds", "wait_seconds", "retry_after_seconds", "cooldown_seconds", "remaining_seconds", "retry_after", "wait")
 	smsWaitUntil := firstNonEmpty(textField(sms, "sms_wait_until"), textField(sms, "wait_until"), textField(sms, "retry_after_at"), textField(sms, "cooldown_until"))
 	proxyAccepted := boolField(proxy, "accepted")
+	if accountFlow == accountProbeFlowUnknown {
+		accountFlow = accountFlowFromRawReason(accountRawReason)
+	}
 	requestFailed := !proxyAccepted || accountProbeRequestFailed(accountFlow, accountStatus, accountRawStatus, accountRawReason, accountError)
 	requestSucceeded := !requestFailed
-	if requestFailed {
+	if requestFailed && !terminalAccountFlow(accountFlow) {
 		accountFlow = accountProbeFlowProbeFailed
 	}
 	canRegister := canRegisterValue(requestSucceeded, accountReachable, smsAvailable, blocked, accountFlow)
@@ -225,6 +228,29 @@ func buildNumberProbeResult(input map[string]any, proxy map[string]any, fingerpr
 	}
 }
 
+func accountFlowFromRawReason(reason string) string {
+	normalized := strings.ToLower(strings.TrimSpace(reason))
+	switch {
+	case existInvalidNumberReason(normalized):
+		return accountProbeFlowInvalidNumber
+	case existRateLimitedReason(normalized):
+		return accountProbeFlowRateLimited
+	case normalized == "blocked":
+		return accountProbeFlowBlocked
+	default:
+		return accountProbeFlowUnknown
+	}
+}
+
+func terminalAccountFlow(flow string) bool {
+	switch flow {
+	case accountProbeFlowInvalidNumber, accountProbeFlowRateLimited, accountProbeFlowBlocked:
+		return true
+	default:
+		return false
+	}
+}
+
 func accountProbeRequestFailed(accountFlow string, accountStatus string, accountRawStatus string, accountRawReason string, accountError string) bool {
 	if strings.TrimSpace(accountError) != "" {
 		return true
@@ -247,8 +273,15 @@ func numberProbeFailureReason(proxyAccepted bool, accountStatus string, accountR
 	if strings.TrimSpace(accountError) != "" {
 		return "account probe request failed: " + accountError
 	}
+	rawReason := strings.ToLower(strings.TrimSpace(accountRawReason))
+	if existInvalidNumberReason(rawReason) {
+		return "phone format is invalid: " + rawReason
+	}
+	if existRateLimitedReason(rawReason) {
+		return "verification request is cooling down: " + rawReason
+	}
 	if accountStatus == "ACCOUNT_PROBE_STATUS_REJECTED" {
-		return "account probe request rejected"
+		return "account probe request rejected: " + firstNonEmpty(accountRawReason, accountRawStatus, "UNKNOWN")
 	}
 	return "account probe request failed: " + firstNonEmpty(accountRawReason, accountRawStatus, accountStatus, "UNKNOWN")
 }

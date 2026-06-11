@@ -1,5 +1,5 @@
 import { LongConnectionStatus, type LongConnectionState } from '../proto/byte/v/forge/waapp/v1/messaging';
-import { Badge } from './ui';
+import { Badge } from '@/components/ui/badge';
 
 export function WaConnectionDot({ connection, loading = false, className = '' }: { connection?: LongConnectionState; loading?: boolean; className?: string }) {
   const view = connectionView(connection?.status, loading);

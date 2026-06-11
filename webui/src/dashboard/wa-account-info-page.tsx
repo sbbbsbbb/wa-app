@@ -5,7 +5,7 @@ import { waAccountID, waAccountTitle } from './wa-api';
 import { WaAccountAvatar } from './wa-account-avatar';
 import { WaAccountDetail } from './wa-account-detail';
 import { waChatsPath } from './wa-route-paths';
-import { Button } from './ui';
+import { Button } from '@/components/ui/button';
 
 type Props = {
   account: WAAccount;

@@ -5,7 +5,8 @@ import { useMutation } from '@tanstack/react-query';
 import type { WAAccount } from '../proto/byte/v/forge/waapp/v1/profile';
 import { setWaAccountProfileName, setWaAccountProfilePicture, waAccountID, waAccountProfilePictureURL } from './wa-api';
 import { WhatsAppIcon } from './wa-brand-icon';
-import { Button, Input } from './ui';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 const maxProfilePictureBytes = 2 * 1024 * 1024;
 

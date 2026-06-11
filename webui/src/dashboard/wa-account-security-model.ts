@@ -1,6 +1,7 @@
 import { AccountSettingsOperationStatus } from '../proto/byte/v/forge/waapp/v1/account_settings';
 import type { GetTwoFactorAuthStatusResponse, TwoFactorAuthStatus } from '../proto/byte/v/forge/waapp/v1/account_settings';
-import type { BadgeVariant } from './ui';
+
+type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline';
 
 export type TwoFactorStatusView = { isFetching: boolean; isError: boolean; data?: { status?: TwoFactorAuthStatus } };
 
