@@ -44,7 +44,7 @@ export function WaAccountRail({ accounts, selectedID, avatarVersion, connections
   const visibleAccounts = useFilteredAccounts(accounts, expanded ? query : '');
   return (
     <Sidebar collapsible="icon" aria-label="WA 账号" className="border-r border-border">
-      <SidebarHeader className="border-b border-sidebar-border">
+      <SidebarHeader className="h-16 justify-center border-b border-sidebar-border">
         <RailHeader value={query} onChange={setQuery} />
       </SidebarHeader>
       <SidebarContent>
