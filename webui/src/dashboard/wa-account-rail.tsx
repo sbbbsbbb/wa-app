@@ -35,6 +35,9 @@ import {
 type RailProps = { accounts: WAAccount[]; selectedID: string; avatarVersion: string; connections: Map<string, LongConnectionState>; loading: boolean; connectionsLoading: boolean; hasNextPage: boolean; loadingMore: boolean; onLoadMore: () => void };
 type AccountItemProps = { account: WAAccount; selected: boolean; avatarVersion: string; connection?: LongConnectionState; loading: boolean };
 
+const collapsedIconButtonClass = 'group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:justify-center';
+const collapsedTextClass = 'group-data-[collapsible=icon]:hidden';
+
 export function WaAccountRail({ accounts, selectedID, avatarVersion, connections, loading, connectionsLoading, hasNextPage, loadingMore, onLoadMore }: RailProps) {
   const [query, setQuery] = useState('');
   const { state } = useSidebar();
@@ -76,7 +79,7 @@ export function WaAccountRail({ accounts, selectedID, avatarVersion, connections
 function RailBrand({ count }: { count: number }) {
   const { state, toggleSidebar } = useSidebar();
   if (state === 'collapsed') {
-    return <SidebarMenuButton size="lg" tooltip="展开账号栏" aria-label="展开账号栏" onClick={toggleSidebar}><WhatsAppIcon className="size-7" /></SidebarMenuButton>;
+    return <SidebarMenuButton size="lg" tooltip="展开账号栏" aria-label="展开账号栏" className={collapsedIconButtonClass} onClick={toggleSidebar}><WhatsAppIcon className="size-7" /></SidebarMenuButton>;
   }
   return (
     <div className="flex h-12 items-center gap-2 rounded-md px-2">
@@ -101,13 +104,13 @@ function AccountItem({ account, selected, avatarVersion, connection, loading }: 
   const title = waAccountTitle(account);
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton asChild size="lg" isActive={selected} tooltip={title} className="h-14">
+      <SidebarMenuButton asChild size="lg" isActive={selected} tooltip={title} className={`h-14 ${collapsedIconButtonClass}`}>
         <NavLink to={waChatsPath(id)} title={title} aria-label={title}>
           <span className="relative shrink-0">
             <WaAccountAvatar account={account} version={avatarVersion} size="xs" />
             <WaConnectionDot className="absolute -bottom-0.5 -right-0.5 ring-2 ring-sidebar" connection={connection} loading={loading} />
           </span>
-          <span className="min-w-0 flex-1">
+          <span className={`min-w-0 flex-1 ${collapsedTextClass}`}>
             <span className="block whitespace-nowrap text-sm font-medium tabular-nums">{title}</span>
             <span className="block truncate text-xs text-muted-foreground">{id}</span>
           </span>
@@ -120,14 +123,14 @@ function AccountItem({ account, selected, avatarVersion, connection, loading }: 
 function RailFooter({ selectedID }: { selectedID: string }) {
   return (
     <SidebarMenu>
-      <SidebarMenuItem>{selectedID ? <FooterLink title="账号信息" to={waAccountPath(selectedID)}><Info /></FooterLink> : <SidebarMenuButton size="lg" disabled tooltip="账号信息" aria-label="账号信息"><Info /><span>账号信息</span></SidebarMenuButton>}</SidebarMenuItem>
+      <SidebarMenuItem>{selectedID ? <FooterLink title="账号信息" to={waAccountPath(selectedID)}><Info /></FooterLink> : <SidebarMenuButton size="lg" disabled tooltip="账号信息" aria-label="账号信息" className={collapsedIconButtonClass}><Info /><span className={collapsedTextClass}>账号信息</span></SidebarMenuButton>}</SidebarMenuItem>
       <SidebarMenuItem><FooterLink title="添加账号" to="/accounts/new"><Plus /></FooterLink></SidebarMenuItem>
     </SidebarMenu>
   );
 }
 
 function FooterLink({ children, title, to }: { children: ReactNode; title: string; to: string }) {
-  return <SidebarMenuButton asChild size="lg" tooltip={title}><Link to={to} title={title} aria-label={title}>{children}<span>{title}</span></Link></SidebarMenuButton>;
+  return <SidebarMenuButton asChild size="lg" tooltip={title} className={collapsedIconButtonClass}><Link to={to} title={title} aria-label={title}>{children}<span className={collapsedTextClass}>{title}</span></Link></SidebarMenuButton>;
 }
 
 function LoadMoreButton({ loading, onLoadMore }: { loading: boolean; onLoadMore: () => void }) {
