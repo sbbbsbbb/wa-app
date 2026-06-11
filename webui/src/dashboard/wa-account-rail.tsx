@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Info, Loader2, PanelLeftClose, PanelLeftOpen, Plus } from 'lucide-react';
+import { Info, Loader2, Plus } from 'lucide-react';
 import { Link, NavLink } from 'react-router';
 import type { LongConnectionState } from '../proto/byte/v/forge/waapp/v1/messaging';
 import type { WAAccount } from '../proto/byte/v/forge/waapp/v1/profile';
@@ -27,13 +27,13 @@ import {
   SidebarMenuSkeleton,
   SidebarRail,
   SidebarSeparator,
+  SidebarTrigger,
   useSidebar,
 } from './ui';
 
 type RailProps = { accounts: WAAccount[]; selectedID: string; avatarVersion: string; connections: Map<string, LongConnectionState>; loading: boolean; connectionsLoading: boolean; hasNextPage: boolean; loadingMore: boolean; onLoadMore: () => void };
 type AccountItemProps = { account: WAAccount; selected: boolean; avatarVersion: string; connection?: LongConnectionState; loading: boolean };
 
-const collapsedIconButtonClass = 'group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-12! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0!';
 const accountButtonClass = 'h-12 gap-2 p-1! group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-12! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-1!';
 const footerButtonClass = 'group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:justify-center';
 const collapsedTextClass = 'group-data-[collapsible=icon]:hidden';
@@ -73,20 +73,10 @@ export function WaAccountRail({ accounts, selectedID, avatarVersion, connections
 }
 
 function RailHeader({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  const { state, toggleSidebar } = useSidebar();
-  if (state === 'collapsed') {
-    return (
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton size="lg" tooltip="展开账号栏" aria-label="展开账号栏" className={collapsedIconButtonClass} onClick={toggleSidebar}><PanelLeftOpen className="size-6!" /></SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
-    );
-  }
   return (
-    <div className="flex h-12 items-center gap-2">
-      <SidebarInput className="h-9" value={value} onChange={(event) => onChange(event.target.value)} placeholder="搜索手机号" aria-label="搜索账号" />
-      <Button variant="ghost" size="icon-sm" aria-label="收起账号栏" title="收起账号栏" onClick={toggleSidebar}><PanelLeftClose /></Button>
+    <div className="flex h-10 items-center gap-2 group-data-[collapsible=icon]:justify-center">
+      <SidebarInput className="h-8 group-data-[collapsible=icon]:hidden" value={value} onChange={(event) => onChange(event.target.value)} placeholder="搜索手机号" aria-label="搜索账号" />
+      <SidebarTrigger className="shrink-0" aria-label="切换账号栏" title="切换账号栏" />
     </div>
   );
 }

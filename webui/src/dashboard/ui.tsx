@@ -38,6 +38,7 @@ export {
   SidebarProvider,
   SidebarRail,
   SidebarSeparator,
+  SidebarTrigger,
   useSidebar,
   ToastMessage,
   useToastMessage,
