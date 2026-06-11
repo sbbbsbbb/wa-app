@@ -1,5 +1,5 @@
-import { type FormEvent, useState } from 'react';
-import { CheckCircle2, KeyRound, Mail, Send, ShieldCheck } from 'lucide-react';
+import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
+import { CheckCircle2, KeyRound, Mail, Pencil, Send, ShieldCheck, X } from 'lucide-react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { AccountSettingsOperationStatus } from '../proto/byte/v/forge/waapp/v1/account_settings';
 import type { WaAccountProjection } from './wa-api';
@@ -14,13 +14,16 @@ export function WaAccountSecurityPanel({ account, onDone, onError }: Props) {
   const [email, setEmail] = useState('');
   const [emailOtp, setEmailOtp] = useState('');
   const [emailOtpVisible, setEmailOtpVisible] = useState(false);
+  const [pinEditing, setPinEditing] = useState(false);
+  const [emailEditing, setEmailEditing] = useState(false);
   const [lastStatus, setLastStatus] = useState<AccountSettingsOperationStatus | undefined>();
   const handleError = (error: unknown) => onError(error instanceof Error ? error.message : String(error));
   const handleSuccess = (message: string, status?: AccountSettingsOperationStatus) => { setLastStatus(status); onDone(message); };
+  const accountID = waAccountID(account);
   const twoFactorStatus = useQuery({
-    queryKey: waKeys.twoFactorStatus(waAccountID(account)),
+    queryKey: waKeys.twoFactorStatus(accountID),
     queryFn: () => getWaTwoFactorAuthStatus(account),
-    enabled: Boolean(waAccountID(account)),
+    enabled: Boolean(accountID),
     staleTime: 30_000,
   });
   const pinConfigured = twoFactorConfigured(twoFactorStatus);
@@ -31,6 +34,7 @@ export function WaAccountSecurityPanel({ account, onDone, onError }: Props) {
     mutationFn: () => setWaTwoFactorAuthSettings(account, pin),
     onSuccess: (resp) => {
       setPin('');
+      setPinEditing(false);
       void twoFactorStatus.refetch();
       handleSuccess(pinConfigured ? '2FA PIN 修改请求已提交' : '2FA PIN 设置请求已提交', resp.operation?.status);
     },
@@ -41,6 +45,7 @@ export function WaAccountSecurityPanel({ account, onDone, onError }: Props) {
     onSuccess: (resp) => {
       const status = resp.operation?.status;
       setEmailOtpVisible(shouldShowEmailOtp(status));
+      setEmailEditing(false);
       if (status === AccountSettingsOperationStatus.ACCOUNT_SETTINGS_OPERATION_STATUS_VERIFIED) setEmailOtp('');
       void twoFactorStatus.refetch();
       handleSuccess(emailConfigured ? '账户邮箱修改请求已提交' : '账户邮箱设置请求已提交', status);
@@ -68,40 +73,28 @@ export function WaAccountSecurityPanel({ account, onDone, onError }: Props) {
   });
   const busy = twoFactor.isPending || emailSet.isPending || otpRequest.isPending || otpVerify.isPending;
   const handleEmailChange = (value: string) => { setEmail(value); setEmailOtp(''); setEmailOtpVisible(false); };
+  const pinFormVisible = statusReady(twoFactorStatus) && (!pinConfigured || pinEditing);
+  const emailFormVisible = statusReady(twoFactorStatus) && ((!emailConfigured && !emailOtpVisible) || emailEditing);
+  useEffect(() => {
+    setPin('');
+    setEmail('');
+    setEmailOtp('');
+    setEmailOtpVisible(false);
+    setPinEditing(false);
+    setEmailEditing(false);
+  }, [accountID]);
   return (
     <section className="grid gap-4">
       {lastStatus !== undefined ? <div className="flex items-center justify-end"><Badge variant="outline">{statusLabel(lastStatus)}</Badge></div> : null}
       <div className="grid gap-4 lg:grid-cols-2">
-        <form className="grid gap-3" onSubmit={(event) => submit(event, twoFactor.mutate)}>
-          <div className="inline-flex items-center gap-2 text-sm font-medium">
-            <ShieldCheck size={15} />{pinAction}
-            <Badge variant={twoFactorBadgeVariant(twoFactorStatus)}>{twoFactorStatusLabel(twoFactorStatus)}</Badge>
-          </div>
-          <FieldGroup>
-            <Field>
-              <FieldLabel>{pinConfigured ? '新 6 位 PIN' : '6 位 PIN'}</FieldLabel>
-              <Input value={pin} onChange={(event) => setPin(event.target.value)} inputMode="numeric" autoComplete="one-time-code" type="password" maxLength={6} disabled={busy} />
-            </Field>
-            <Button type="submit" disabled={busy || pin.length !== 6} title={pinAction}>
-              <KeyRound size={14} />{pinConfigured ? '修改 PIN' : '设置 PIN'}
-            </Button>
-          </FieldGroup>
-        </form>
-        <form className="grid gap-3" onSubmit={(event) => submit(event, emailSet.mutate)}>
-          <div className="inline-flex items-center gap-2 text-sm font-medium">
-            <Mail size={15} />{emailAction}
-            <Badge variant={emailBadgeVariant(twoFactorStatus)}>{emailStatusLabel(twoFactorStatus)}</Badge>
-          </div>
-          <FieldGroup>
-            <Field>
-              <FieldLabel>{emailConfigured ? '新邮箱地址' : '邮箱地址'}</FieldLabel>
-              <Input value={email} onChange={(event) => handleEmailChange(event.target.value)} type="email" disabled={busy} placeholder={emailConfigured ? '新邮箱地址' : '邮箱地址'} />
-            </Field>
-            <Button type="submit" disabled={busy || !email} title={emailAction}>
-              <Mail size={14} />{emailConfigured ? '修改邮箱' : '设置邮箱'}
-            </Button>
-          </FieldGroup>
-        </form>
+        <section className="grid gap-3">
+          <SettingHeader icon={<ShieldCheck size={15} />} title={pinAction} badge={<Badge variant={twoFactorBadgeVariant(twoFactorStatus)}>{twoFactorStatusLabel(twoFactorStatus)}</Badge>} canEdit={pinConfigured && !pinEditing && !busy} onEdit={() => setPinEditing(true)} />
+          {pinFormVisible ? <PinForm pin={pin} busy={busy} configured={pinConfigured} onPinChange={setPin} onCancel={() => { setPin(''); setPinEditing(false); }} onSubmit={(event) => submit(event, twoFactor.mutate)} /> : null}
+        </section>
+        <section className="grid gap-3">
+          <SettingHeader icon={<Mail size={15} />} title={emailAction} badge={<Badge variant={emailBadgeVariant(twoFactorStatus)}>{emailStatusLabel(twoFactorStatus)}</Badge>} canEdit={emailConfigured && !emailEditing && !busy} onEdit={() => setEmailEditing(true)} />
+          {emailFormVisible ? <EmailForm email={email} busy={busy} configured={emailConfigured} onEmailChange={handleEmailChange} onCancel={() => { setEmail(''); setEmailEditing(false); }} onSubmit={(event) => submit(event, emailSet.mutate)} /> : null}
+        </section>
         {emailOtpVisible && (
           <div className="grid gap-3 border-t border-border pt-5 lg:col-span-2">
             <div className="flex items-center gap-2 text-sm font-medium"><Send size={15} />邮箱 OTP</div>
@@ -117,7 +110,23 @@ export function WaAccountSecurityPanel({ account, onDone, onError }: Props) {
   );
 }
 
+function SettingHeader({ icon, title, badge, canEdit, onEdit }: { icon: ReactNode; title: string; badge: ReactNode; canEdit: boolean; onEdit: () => void }) {
+  return <div className="flex items-center justify-between gap-2"><div className="inline-flex items-center gap-2 text-sm font-medium">{icon}{title}{badge}</div>{canEdit ? <Button size="icon" variant="ghost" type="button" title={title} aria-label={title} onClick={onEdit}><Pencil size={16} /></Button> : null}</div>;
+}
+
+function PinForm({ pin, busy, configured, onPinChange, onCancel, onSubmit }: { pin: string; busy: boolean; configured: boolean; onPinChange: (value: string) => void; onCancel: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+  return <form className="grid gap-3" onSubmit={onSubmit}><FieldGroup><Field><FieldLabel>{configured ? '新 6 位 PIN' : '6 位 PIN'}</FieldLabel><Input value={pin} onChange={(event) => onPinChange(event.target.value)} inputMode="numeric" autoComplete="one-time-code" type="password" maxLength={6} disabled={busy} /></Field>{configured ? <Button type="button" variant="ghost" size="icon" disabled={busy} title="取消修改" aria-label="取消修改" onClick={onCancel}><X size={16} /></Button> : null}<Button type="submit" disabled={busy || pin.length !== 6}><KeyRound size={14} />{configured ? '修改 PIN' : '设置 PIN'}</Button></FieldGroup></form>;
+}
+
+function EmailForm({ email, busy, configured, onEmailChange, onCancel, onSubmit }: { email: string; busy: boolean; configured: boolean; onEmailChange: (value: string) => void; onCancel: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+  return <form className="grid gap-3" onSubmit={onSubmit}><FieldGroup><Field><FieldLabel>{configured ? '新邮箱地址' : '邮箱地址'}</FieldLabel><Input value={email} onChange={(event) => onEmailChange(event.target.value)} type="email" disabled={busy} placeholder={configured ? '新邮箱地址' : '邮箱地址'} /></Field>{configured ? <Button type="button" variant="ghost" size="icon" disabled={busy} title="取消修改" aria-label="取消修改" onClick={onCancel}><X size={16} /></Button> : null}<Button type="submit" disabled={busy || !email}><Mail size={14} />{configured ? '修改邮箱' : '设置邮箱'}</Button></FieldGroup></form>;
+}
+
 function submit(event: FormEvent<HTMLFormElement>, run: () => void) { event.preventDefault(); run(); }
+
+function statusReady(query: TwoFactorStatusView) {
+  return !query.isPending && !query.isError;
+}
 
 function shouldShowEmailOtp(status?: AccountSettingsOperationStatus) {
   return status === AccountSettingsOperationStatus.ACCOUNT_SETTINGS_OPERATION_STATUS_NEEDS_VERIFICATION

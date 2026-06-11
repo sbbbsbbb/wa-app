@@ -1,6 +1,6 @@
 import { type FormEvent, type RefObject, useEffect, useRef, useState } from 'react';
 import AvatarEditor, { type AvatarEditorRef } from 'react-avatar-editor';
-import { Check, Loader2 } from 'lucide-react';
+import { Check, Loader2, Pencil, X } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import type { WAAccount } from '../proto/byte/v/forge/waapp/v1/profile';
 import { setWaAccountProfileName, setWaAccountProfilePicture, waAccountID, waAccountProfilePictureURL } from './wa-api';
@@ -21,6 +21,7 @@ export function WaAccountProfileSettings({ account, onDone, onError, onAccountCh
   const savedName = (account.display_name || '').trim();
   const [currentName, setCurrentName] = useState(savedName);
   const [displayName, setDisplayName] = useState(savedName);
+  const [nameEditing, setNameEditing] = useState(!savedName);
   const [picture, setPicture] = useState<File | null>(null);
   const [activePicture, setActivePicture] = useState('');
   const [avatarVersion, setAvatarVersion] = useState('');
@@ -43,6 +44,7 @@ export function WaAccountProfileSettings({ account, onDone, onError, onAccountCh
       const nextName = displayName.trim();
       setCurrentName(nextName);
       setDisplayName(nextName);
+      setNameEditing(false);
       onAccountChanged();
       onDone(currentName ? '名称已修改' : '名称已设置');
     },
@@ -74,6 +76,7 @@ export function WaAccountProfileSettings({ account, onDone, onError, onAccountCh
   useEffect(() => {
     setCurrentName(savedName);
     setDisplayName(savedName);
+    setNameEditing(!savedName);
     setActivePicture('');
     setAvatarVersion('');
     setRemoteFailed(false);
@@ -87,12 +90,20 @@ export function WaAccountProfileSettings({ account, onDone, onError, onAccountCh
           {picture ? <AvatarPreview editor={editor} image={picture} onReady={(dataURL) => pictureMutation.mutate({ dataURL, file: picture })} onError={(message) => { resetPictureSelection(); onError(message); }} /> : <StoredAvatar src={activePicture || remoteAvatar} onError={() => setRemoteFailed(true)} />}
           {pictureBusy ? <span className="absolute inset-0 grid place-items-center bg-background/70"><Loader2 className="size-4 animate-spin" /></span> : null}
         </Button>
-        <form className="flex min-w-0 flex-1 items-center gap-2" onSubmit={(event) => submitName(event, () => nameMutation.mutate())}>
-          <Input className="min-w-0 flex-1" value={displayName} maxLength={25} placeholder="账号名称" aria-label="账号名称" disabled={nameBusy} onChange={(event) => setDisplayName(event.target.value)} />
-          <Button className="h-10 w-10 px-0" type="submit" disabled={nameBusy || !name || !nameChanged || [...name].length > 25} title={nameAction} aria-label={nameAction}>
-            {nameBusy ? <Loader2 className="size-4 animate-spin" /> : <Check size={16} />}
-          </Button>
-        </form>
+        {currentName && !nameEditing ? (
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-border px-3 py-2">
+            <div className="min-w-0 flex-1"><p className="text-xs text-muted-foreground">名称</p><p className="truncate text-sm font-medium">{currentName}</p></div>
+            <Button size="icon" variant="ghost" type="button" title="修改名称" aria-label="修改名称" onClick={() => { setDisplayName(currentName); setNameEditing(true); }}><Pencil size={16} /></Button>
+          </div>
+        ) : (
+          <form className="flex min-w-0 flex-1 items-center gap-2" onSubmit={(event) => submitName(event, () => nameMutation.mutate())}>
+            <Input className="min-w-0 flex-1" value={displayName} maxLength={25} placeholder="账号名称" aria-label="账号名称" disabled={nameBusy} onChange={(event) => setDisplayName(event.target.value)} />
+            {currentName ? <Button className="h-10 w-10 px-0" variant="ghost" type="button" disabled={nameBusy} title="取消修改" aria-label="取消修改" onClick={() => { setDisplayName(currentName); setNameEditing(false); }}><X size={16} /></Button> : null}
+            <Button className="h-10 w-10 px-0" type="submit" disabled={nameBusy || !name || !nameChanged || [...name].length > 25} title={nameAction} aria-label={nameAction}>
+              {nameBusy ? <Loader2 className="size-4 animate-spin" /> : <Check size={16} />}
+            </Button>
+          </form>
+        )}
       </div>
       <Input ref={fileInput} className="hidden" type="file" accept="image/jpeg,image/png,image/webp" disabled={pictureBusy} onChange={(event) => setSelectedPicture(event.target.files?.[0] || null, setPicture, onError)} />
     </section>
