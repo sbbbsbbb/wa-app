@@ -20,7 +20,7 @@ export function WaAccountDetail({ account, profiles, profilesLoading, busy, onDe
       {isRegistrationPending(account) && <ManualOtpSubmit account={account} busy={busy} onDone={onDone} onError={onError} />}
       <section className="rounded-xl border border-border p-3"><h3 className="mb-2 text-sm font-semibold">基础信息</h3><InfoGrid account={account} /></section>
       <WaAccountProfileSettings account={account} onDone={onDone} onError={onError} onAvatarChanged={onAvatarChanged} />
-      <details className="rounded-xl border border-border p-3" open><summary className="cursor-pointer text-sm font-semibold">设备指纹</summary><div className="mt-3"><WaDeviceFingerprintPanel profiles={profiles} loading={profilesLoading} /></div></details>
+      <details className="rounded-xl border border-border p-3"><summary className="cursor-pointer text-sm font-semibold">设备指纹</summary><div className="mt-3"><WaDeviceFingerprintPanel profiles={profiles} loading={profilesLoading} /></div></details>
       <details className="rounded-xl border border-border p-3"><summary className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold"><Shield size={15} />安全设置</summary><div className="mt-3"><WaAccountSecurityPanel account={account} onDone={onDone} onError={onError} /></div></details>
       <details className="rounded-xl border border-destructive/30 p-3"><summary className="cursor-pointer text-sm font-semibold text-destructive">危险操作</summary><div className="mt-3"><Button variant="destructive" disabled={busy} onClick={() => onDelete(account)}><Trash2 size={14} />删除账号</Button></div></details>
     </section>

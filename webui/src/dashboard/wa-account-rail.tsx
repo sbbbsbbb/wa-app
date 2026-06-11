@@ -11,6 +11,8 @@ import { WaConnectionDot } from './wa-connection-dot';
 import { waAccountPath, waChatsPath } from './wa-route-paths';
 import {
   Button,
+  ButtonGroup,
+  ButtonGroupText,
   Empty,
   EmptyDescription,
   EmptyHeader,
@@ -93,10 +95,10 @@ function RailBrand({ count }: { count: number }) {
 
 function RailSearch({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   return (
-    <div className="relative">
-      <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-      <SidebarInput className="pl-8" value={value} onChange={(event) => onChange(event.target.value)} placeholder="搜索手机号或账号 ID" aria-label="搜索账号" />
-    </div>
+    <ButtonGroup className="w-full">
+      <ButtonGroupText className="h-8 bg-background px-2 text-muted-foreground"><Search className="size-4" /></ButtonGroupText>
+      <SidebarInput value={value} onChange={(event) => onChange(event.target.value)} placeholder="搜索手机号或账号 ID" aria-label="搜索账号" />
+    </ButtonGroup>
   );
 }
 

@@ -53,17 +53,20 @@ function BubbleMessage() {
   const source = meta?.source === 'WA 消息' ? '' : meta?.source || '';
   return (
     <MessagePrimitive.Root className={`flex w-full ${outgoing ? 'justify-end' : 'justify-start'}`}>
-      <div className={`max-w-[min(640px,82%)] rounded-3xl border px-4 py-3 shadow-sm ${outgoing ? 'rounded-tr-md border-emerald-200 bg-emerald-50' : unread ? 'rounded-tl-md border-emerald-200 bg-emerald-50/70' : 'rounded-tl-md border-border bg-card'}`}>
-        <div className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">{source ? <span>{source}</span> : null}{unread ? <Badge>未读</Badge> : null}{source || unread ? <span>·</span> : null}<MessageTime /></div>
-        <WaMessageContent text={meta?.displayText || ''} />
+      <div className={`flex max-w-[min(640px,82%)] flex-col ${outgoing ? 'items-end' : 'items-start'}`}>
+        <div className={`w-fit max-w-full rounded-3xl border px-4 py-3 shadow-sm ${outgoing ? 'rounded-tr-md border-emerald-200 bg-emerald-50' : unread ? 'rounded-tl-md border-emerald-200 bg-emerald-50/70' : 'rounded-tl-md border-border bg-card'}`}>
+          {source || unread ? <div className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">{source ? <span>{source}</span> : null}{unread ? <Badge>未读</Badge> : null}</div> : null}
+          <WaMessageContent text={meta?.displayText || ''} />
+        </div>
+        <MessageTime className="mt-1 px-2 text-[11px] text-muted-foreground" />
       </div>
     </MessagePrimitive.Root>
   );
 }
 
-function MessageTime() {
+function MessageTime({ className = '' }: { className?: string }) {
   const createdAt = useMessage((message) => message.createdAt);
-  return createdAt ? <time>{createdAt.toLocaleString()}</time> : null;
+  return createdAt ? <time className={className}>{createdAt.toLocaleString()}</time> : null;
 }
 
 function ChatComposer({ disabled, error, onSendMessage }: { disabled: boolean; error?: string; onSendMessage: (text: string) => Promise<unknown> }) {
