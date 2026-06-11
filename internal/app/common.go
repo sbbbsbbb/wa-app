@@ -1,10 +1,12 @@
 package app
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"net"
 	"strings"
 	"time"
 
@@ -56,7 +58,15 @@ func ToProtoError(err error) *waappv1.WaError {
 	if errors.As(err, &appErr) {
 		return &waappv1.WaError{Code: appErr.Code, Message: appErr.Message, Retryable: appErr.Retryable}
 	}
-	return &waappv1.WaError{Code: waappv1.WaErrorCode_WA_ERROR_CODE_INTERNAL, Message: "wa-app operation failed", Retryable: false}
+	message := strings.TrimSpace(err.Error())
+	if message == "" {
+		message = "wa-app operation failed"
+	}
+	return &waappv1.WaError{
+		Code:      waappv1.WaErrorCode_WA_ERROR_CODE_INTERNAL,
+		Message:   message,
+		Retryable: isRetryableInternalError(err),
+	}
 }
 
 func errorFromProto(err *waappv1.WaError) *AppError {
@@ -181,4 +191,43 @@ func durationFromSeconds(seconds int64) *durationpb.Duration {
 		return nil
 	}
 	return durationpb.New(time.Duration(seconds) * time.Second)
+}
+
+func isRetryableInternalError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return true
+	}
+	return hasRetryableErrorMarker(err.Error())
+}
+
+func hasRetryableErrorMarker(message string) bool {
+	message = strings.ToLower(strings.TrimSpace(message))
+	if message == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"timeout",
+		"timed out",
+		"context deadline exceeded",
+		"deadline exceeded",
+		"connection reset",
+		"connection refused",
+		"no such host",
+		"network is unreachable",
+		"eof",
+		"i/o timeout",
+		"proxy",
+		"too many requests",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
