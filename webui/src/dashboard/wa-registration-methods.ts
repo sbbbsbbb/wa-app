@@ -49,11 +49,22 @@ export function registrationMethodStatus(status: WaProbeStatus, method: Verifica
   return status.methodStatuses.find((item) => methodStatusMatches(item, method));
 }
 
-export function registrationMethodAvailable(status: WaProbeStatus, method: VerificationDeliveryMethod) {
+export function registrationMethodCooldownSeconds(status: WaProbeStatus, method: VerificationDeliveryMethod, elapsedSeconds = 0) {
+  const methodStatus = registrationMethodStatus(status, method);
+  const base = methodStatus?.cooldownSeconds || 0;
+  return base > 0 ? Math.max(0, Math.ceil(base - elapsedSeconds)) : 0;
+}
+
+export function registrationMethodAvailable(status: WaProbeStatus, method: VerificationDeliveryMethod, elapsedSeconds = 0) {
   const methodStatus = registrationMethodStatus(status, method);
   if (!methodStatus) return false;
-  if (methodStatus.cooldownSeconds && methodStatus.cooldownSeconds > 0) return false;
+  if (registrationMethodCooldownSeconds(status, method, elapsedSeconds) > 0) return false;
+  if (methodStatus.cooldownSeconds && methodStatus.cooldownSeconds > 0) return true;
   return methodStatus.available === true;
+}
+
+export function registrationAnyMethodAvailable(status: WaProbeStatus | null, elapsedSeconds = 0) {
+  return Boolean(status && selectableRegistrationMethods.some((option) => registrationMethodAvailable(status, option.value, elapsedSeconds)));
 }
 
 function methodOption(value: VerificationDeliveryMethod, code: string, description: string): SelectableRegistrationMethodOption {

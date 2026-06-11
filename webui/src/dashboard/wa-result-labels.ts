@@ -47,6 +47,17 @@ export function cooldownLabel(value?: number | null) {
   return value && value > 0 ? `冷却 ${formatSeconds(value)}` : '';
 }
 
+export function countdownLabel(value?: number | null) {
+  if (!value || value <= 0) return '';
+  const total = Math.ceil(value);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const paddedMinutes = hours > 0 ? String(minutes).padStart(2, '0') : String(minutes);
+  const paddedSeconds = String(seconds).padStart(2, '0');
+  return hours > 0 ? `${hours}:${paddedMinutes}:${paddedSeconds}` : `${paddedMinutes}:${paddedSeconds}`;
+}
+
 export function methodStateLabel(available?: boolean, cooldownSeconds?: number | null) {
   const cooldown = cooldownLabel(cooldownSeconds);
   if (cooldown) return cooldown;

@@ -166,12 +166,12 @@ function deriveAccountFlow(input: { registered?: boolean; blocked?: boolean; sms
   return 'unknown';
 }
 
-export function waProbeCanStartRegistration(result?: WaWorkflowResponse | null, method = 'VERIFICATION_DELIVERY_METHOD_SMS') {
+export function waProbeCanStartRegistration(result?: WaWorkflowResponse | null, method = 'VERIFICATION_DELIVERY_METHOD_SMS', elapsedSeconds = 0) {
   const status = waProbeStatus(result);
   const selectedMethod = methodLabel(method);
   const methodAvailable = selectedMethod === 'SMS'
-    ? status.smsAvailable === true
-    : status.methodStatuses.some((item) => item.label === selectedMethod && item.available === true && !(item.cooldownSeconds && item.cooldownSeconds > 0));
+    ? (status.smsAvailable === true || cooldownExpired(status.smsWaitSeconds, elapsedSeconds)) && !cooldownActive(status.smsWaitSeconds, elapsedSeconds)
+    : status.methodStatuses.some((item) => item.label === selectedMethod && (item.available === true || cooldownExpired(item.cooldownSeconds, elapsedSeconds)) && !cooldownActive(item.cooldownSeconds, elapsedSeconds));
   return Boolean(result)
     && !status.requestFailed
     && methodAvailable
@@ -179,4 +179,12 @@ export function waProbeCanStartRegistration(result?: WaWorkflowResponse | null, 
     && status.blocked !== true
     && status.accountFlow !== 'invalid_number'
     && status.accountFlow !== 'rate_limited';
+}
+
+function cooldownActive(value: number | null, elapsedSeconds: number) {
+  return Boolean(value && value > elapsedSeconds);
+}
+
+function cooldownExpired(value: number | null, elapsedSeconds: number) {
+  return Boolean(value && value > 0 && value <= elapsedSeconds);
 }
