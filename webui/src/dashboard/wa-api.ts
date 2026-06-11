@@ -41,10 +41,12 @@ export function getWaConnections(filters: WaConnectionFilters = {}) {
   return getWaResponse<GetLongConnectionStatusResponse>(`/api/wa/long-connections${params.size ? `?${params}` : ''}`);
 }
 
-export function getWaAccounts(cursor = '') {
+export async function getWaAccounts(cursor = '') {
   const params = new URLSearchParams({ limit: String(ACCOUNT_PAGE_SIZE) });
   if (cursor) params.set('cursor', cursor);
-  return getWaResponse<ListWAAccountsResponse>(`/api/wa/accounts?${params}`);
+  const response = await getWaResponse<ListWAAccountsResponse>(`/api/wa/accounts?${params}`);
+  const accounts = Array.isArray(response.accounts) ? response.accounts.filter((account): account is WAAccount => Boolean(account)) : [];
+  return { ...response, accounts };
 }
 
 export function getWaAccountOtpMessages(waAccountId: string, cursor = '') {
