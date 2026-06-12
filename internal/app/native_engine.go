@@ -626,7 +626,6 @@ func (e *NativeEngine) codeParams(phone *waappv1.PhoneTarget, method waappv1.Ver
 		"expid":             state.Profile.ExpID,
 		"access_session_id": state.Profile.AccessSessionID,
 		"id":                state.Profile.ID,
-		"backup_token":      state.Profile.BackupToken,
 		"authkey":           state.AuthKey,
 		"e_ident":           state.KeyBundle.IdentityPublic,
 		"e_keytype":         state.KeyBundle.KeyType,
@@ -644,9 +643,7 @@ func (e *NativeEngine) codeParams(phone *waappv1.PhoneTarget, method waappv1.Ver
 	if advertisingID := nativeAdvertisingID(state); advertisingID != "" && shouldSendNativeAdvertisingID(phone) {
 		params["advertising_id"] = advertisingID
 	}
-	raw := map[string]struct{}{"id": {}, "backup_token": {}}
-	applyNativeRawParamMap(params, raw, codeDeviceMap(methodName, state), true)
-	return params, raw
+	return params, map[string]struct{}{"id": {}}
 }
 
 func omitEmptyNativeOperatorField(key string, value string) bool {
