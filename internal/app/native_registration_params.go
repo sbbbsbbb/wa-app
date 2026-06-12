@@ -206,8 +206,16 @@ func nativeDeviceMapFields(state nativeState) map[string]string {
 	for key, value := range nativeDefaultDeviceMapFields() {
 		fields[key] = firstNonEmpty(fields[key], value)
 	}
+	if fields["feo2_query_status"] == legacyNativeFeo2QueryStatus {
+		fields["feo2_query_status"] = nativeDefaultFeo2QueryStatus
+	}
 	return fields
 }
+
+const (
+	nativeDefaultFeo2QueryStatus = "did_not_query"
+	legacyNativeFeo2QueryStatus  = "error_security_exception"
+)
 
 func nativeDefaultDeviceMapFields() map[string]string {
 	return map[string]string{
@@ -219,7 +227,7 @@ func nativeDefaultDeviceMapFields() map[string]string {
 		"device_ram":            "3.53",
 		"db":                    "1",
 		"recaptcha":             `{"stage":"ABPROP_DISABLED"}`,
-		"feo2_query_status":     "error_security_exception",
+		"feo2_query_status":     nativeDefaultFeo2QueryStatus,
 		"network_operator_name": "",
 		"sim_operator_name":     "",
 		"mcc":                   "000",

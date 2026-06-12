@@ -363,7 +363,7 @@ func buildNativePhoneProfile(phone *waappv1.PhoneTarget) nativePhoneProfile {
 		"device_ram":            fmt.Sprintf("%.2f", ram),
 		"db":                    "1",
 		"recaptcha":             `{"stage":"ABPROP_DISABLED"}`,
-		"feo2_query_status":     "error_security_exception",
+		"feo2_query_status":     nativeDefaultFeo2QueryStatus,
 		"network_operator_name": "",
 		"sim_operator_name":     "",
 	}
