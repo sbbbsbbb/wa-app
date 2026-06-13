@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -315,7 +316,9 @@ func (c *nativeHTTPClient) postWASafe(ctx context.Context, endpoint string, plai
 	if endpointURL.Scheme != "https" || endpointURL.Host == "" {
 		return nil, "", fmt.Errorf("native endpoint must be https")
 	}
-	resp, err := c.postOrderedForm(ctx, endpointURL, envelope.Body, firstNonEmpty(userAgent, nativeUserAgent(defaultWAAppVersion)), envelope.Authorization)
+	effectiveUserAgent := firstNonEmpty(userAgent, nativeUserAgent(defaultWAAppVersion))
+	logWASafeEnvelopeShape(endpointURL, envelope, effectiveUserAgent)
+	resp, err := c.postOrderedForm(ctx, endpointURL, envelope.Body, effectiveUserAgent, envelope.Authorization)
 	if err != nil {
 		return nil, envelope.Enc, err
 	}
@@ -386,6 +389,51 @@ func (c *nativeHTTPClient) postOrderedForm(ctx context.Context, endpoint *url.UR
 	release = false
 	resp.Body = &nativeResponseBody{ReadCloser: resp.Body, conn: conn}
 	return resp, nil
+}
+
+func logWASafeEnvelopeShape(endpoint *url.URL, envelope waSafeEnvelope, userAgent string) {
+	if endpoint == nil {
+		return
+	}
+	path := nativeRegistrationEndpointKind(endpoint)
+	if path == "" {
+		return
+	}
+	log.Printf(
+		"wa_registration_envelope_shape kind=%s app_version=%s body_len=%d enc_len=%d h_len=%d authorization=%t",
+		probeLogValue(path),
+		probeLogValue(nativeAppVersionFromUserAgent(userAgent)),
+		len(envelope.Body),
+		len(envelope.Enc),
+		nativeWASafeHLength(envelope.Body),
+		envelope.Authorization != "",
+	)
+}
+
+func nativeRegistrationEndpointKind(endpoint *url.URL) string {
+	if endpoint == nil {
+		return ""
+	}
+	raw := endpoint.Query().Get("_")
+	switch raw {
+	case "/v2/exist":
+		return "exist"
+	case "/v2/code":
+		return "code"
+	case "/v2/register":
+		return "register"
+	default:
+		return ""
+	}
+}
+
+func nativeWASafeHLength(body string) int {
+	for _, part := range strings.Split(body, "&") {
+		if strings.HasPrefix(part, "H=") {
+			return len(strings.TrimPrefix(part, "H="))
+		}
+	}
+	return 0
 }
 
 func nativeEndpointAddress(endpoint *url.URL) string {

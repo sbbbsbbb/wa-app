@@ -25,6 +25,13 @@ type wamsysMaterialProvider interface {
 
 type localWamsysMaterialProvider struct{}
 
+const (
+	nativeWamsysGPIAByteLength  = 448
+	nativeWamsysGIByteLength    = 448
+	nativeWamsysSmallByteLength = 32
+	nativeWamsysGAByteLength    = 64
+)
+
 func (localWamsysMaterialProvider) RegistrationMaterial(ctx context.Context, input wamsysMaterialInput) (*waappv1.WamsysCapture, error) {
 	_ = ctx
 	if input.Capture != nil {
@@ -41,18 +48,18 @@ func (localWamsysMaterialProvider) RegistrationMaterial(ctx context.Context, inp
 
 func buildLocalWamsysCapture(input wamsysMaterialInput) *waappv1.WamsysCapture {
 	return &waappv1.WamsysCapture{MapParams: []*waappv1.WamsysMapParam{
-		{Key: "gpia", Value: localWamsysBase64Bytes(randomBytes(288))},
+		{Key: "gpia", Value: localWamsysBase64Bytes(randomBytes(nativeWamsysGPIAByteLength))},
 		{Key: "_ge", Value: []byte(`{"sb":false,"sv":false}`)},
-		{Key: "_gi", Value: localWamsysBase64Bytes(randomBytes(448))},
-		{Key: "_gg", Value: localWamsysBase64Bytes(randomBytes(32))},
-		{Key: "_gp", Value: localWamsysBase64Bytes(deriveLocalWamsysBytes(input, "_gp", 32))},
+		{Key: "_gi", Value: localWamsysBase64Bytes(randomBytes(nativeWamsysGIByteLength))},
+		{Key: "_gg", Value: localWamsysBase64Bytes(randomBytes(nativeWamsysSmallByteLength))},
+		{Key: "_gp", Value: localWamsysBase64Bytes(deriveLocalWamsysBytes(input, "_gp", nativeWamsysSmallByteLength))},
 		{Key: "_ga", Value: buildLocalWamsysGA(input)},
-		{Key: "aid", Value: localWamsysBase64Bytes(deriveLocalWamsysBytes(input, "aid", 32))},
+		{Key: "aid", Value: localWamsysBase64Bytes(deriveLocalWamsysBytes(input, "aid", nativeWamsysSmallByteLength))},
 	}}
 }
 
 func buildLocalWamsysGA(input wamsysMaterialInput) []byte {
-	bi := base64.StdEncoding.EncodeToString(deriveLocalWamsysBytes(input, "_ga.bi", 64))
+	bi := base64.StdEncoding.EncodeToString(deriveLocalWamsysBytes(input, "_ga.bi", nativeWamsysGAByteLength))
 	return []byte(fmt.Sprintf(`{"ai":141,"ae":0,"ap":172,"bi":%q,"mp":false,"mu":false}`, bi))
 }
 

@@ -595,6 +595,19 @@ func nativeAppVersion(appVersion string) string {
 	return strings.TrimSpace(appVersion)
 }
 
+func nativeAppVersionFromUserAgent(userAgent string) string {
+	userAgent = strings.TrimSpace(userAgent)
+	const prefix = "WhatsApp/"
+	if !strings.HasPrefix(userAgent, prefix) {
+		return ""
+	}
+	version := strings.TrimPrefix(userAgent, prefix)
+	if idx := strings.IndexByte(version, ' '); idx >= 0 {
+		version = version[:idx]
+	}
+	return strings.TrimSpace(version)
+}
+
 func normalizeNativePhoneProfile(profile nativePhoneProfile, userAgent string) nativePhoneProfile {
 	if device, ok := nativeDeviceModelFromUserAgent(userAgent); ok {
 		profile.DeviceVendor = firstNonEmpty(profile.DeviceVendor, device.Vendor)
