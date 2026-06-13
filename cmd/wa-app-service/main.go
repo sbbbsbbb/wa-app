@@ -56,7 +56,7 @@ func main() {
 		}
 	}
 	service := app.NewServer(store, runtime, engine, clock, ids)
-	service.SetStaticProxyURLs(cfg.CommonProxy, cfg.NumberProbeProxy, cfg.RegistrationProxy)
+	service.SetCommonProxyURL(cfg.CommonProxy)
 	authConfig := newDashboardAuthConfig(cfg.DashboardAuthPass)
 	grpcListenAddr := configValue(cfg.GRPCListenAddr, defaultGRPCListenAddr)
 	dashboardHTTPAddr := configValue(cfg.DashboardHTTPAddr, defaultDashboardHTTPAddr)

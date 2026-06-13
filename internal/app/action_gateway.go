@@ -649,9 +649,6 @@ func registrationProxyRouteMap(route WAProxyRoute, managed bool) map[string]any 
 	if strings.TrimSpace(route.PolicyMode) != "" {
 		result["policy_mode"] = route.PolicyMode
 	}
-	if !route.ExpiresAt.IsZero() {
-		result["expires_at"] = route.ExpiresAt.UTC().Format(time.RFC3339)
-	}
 	return result
 }
 

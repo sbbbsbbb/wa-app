@@ -1,9 +1,6 @@
 package app
 
-import (
-	"strings"
-	"time"
-)
+import "strings"
 
 type WAProxyRoute struct {
 	AccountID   string
@@ -13,7 +10,6 @@ type WAProxyRoute struct {
 	CountryCode string
 	Source      string
 	PolicyMode  string
-	ExpiresAt   time.Time
 }
 
 func proxyCountryCodeFromPayload(payload map[string]any) string {

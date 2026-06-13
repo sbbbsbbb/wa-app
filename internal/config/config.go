@@ -13,8 +13,6 @@ type Config struct {
 	DashboardStaticDir string `env:"WA_APP_DASHBOARD_STATIC_DIR"`
 	DataDir            string `env:"WA_APP_DATA_DIR"`
 	CommonProxy        string `env:"WA_COMMON_PROXY"`
-	NumberProbeProxy   string `env:"WA_NUMBER_PROBE_PROXY"`
-	RegistrationProxy  string `env:"WA_REGISTRATION_PROXY"`
 	PGDSN              string `env:"WA_APP_PG_DSN"`
 	RedisURL           string `env:"WA_APP_REDIS_URL"`
 }

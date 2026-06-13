@@ -25,10 +25,8 @@ type Server struct {
 	clock   Clock
 	ids     IDGenerator
 
-	commonProxyURL       string
-	numberProbeProxyURL  string
-	registrationProxyURL string
-	longConnections      *LongConnectionManager
+	commonProxyURL  string
+	longConnections *LongConnectionManager
 }
 
 func NewServer(store Store, runtime RuntimeState, runner ProtocolEngine, clock Clock, ids IDGenerator) *Server {
@@ -43,10 +41,8 @@ func NewServer(store Store, runtime RuntimeState, runner ProtocolEngine, clock C
 	return server
 }
 
-func (s *Server) SetStaticProxyURLs(common string, numberProbe string, registration string) {
+func (s *Server) SetCommonProxyURL(common string) {
 	s.commonProxyURL = strings.TrimSpace(common)
-	s.numberProbeProxyURL = strings.TrimSpace(numberProbe)
-	s.registrationProxyURL = strings.TrimSpace(registration)
 }
 
 func (s *Server) RunLongConnections(ctx context.Context) error {

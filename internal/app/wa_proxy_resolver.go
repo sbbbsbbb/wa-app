@@ -13,17 +13,14 @@ const (
 	waProxyStageProbe        waProxyStage = "probe"
 	waProxyStageRegistration waProxyStage = "registration"
 
-	waProxySourceRequestOverride = "REQUEST_OVERRIDE"
-	waProxySourceRequestPolicy   = "REQUEST_POLICY"
-	waProxySourceAccountStage    = "ACCOUNT_STAGE"
-	waProxySourceAccountDefault  = "ACCOUNT_DEFAULT"
-	waProxySourceSystemStage     = "SYSTEM_STAGE"
-	waProxySourceSystemCommon    = "SYSTEM_COMMON"
-	waProxySourceDirect          = "DIRECT"
+	waProxySourceRequestPolicy  = "REQUEST_POLICY"
+	waProxySourceAccountStage   = "ACCOUNT_STAGE"
+	waProxySourceAccountDefault = "ACCOUNT_DEFAULT"
+	waProxySourceSystemCommon   = "SYSTEM_COMMON"
+	waProxySourceDirect         = "DIRECT"
 
-	waProxyModeRequestOverride = "REQUEST_PROXY"
-	waProxyModeDirect          = "DIRECT"
-	waProxyModeCommon          = "COMMON_PROXY"
+	waProxyModeDirect = "DIRECT"
+	waProxyModeCommon = "COMMON_PROXY"
 )
 
 type waProxyResolveRequest struct {
@@ -35,13 +32,6 @@ type waProxyResolveRequest struct {
 
 func (s *Server) resolveWAProxyRoute(ctx context.Context, req waProxyResolveRequest) (WAProxyRoute, bool, error) {
 	countryCode := normalizeProxyCountryCode(firstNonEmpty(req.CountryCode, proxyCountryCodeFromPayload(req.Payload)))
-	if proxyURL := actionProxyURL(req.Payload); proxyURL != "" {
-		route := staticProxyRoute("request-override", proxyURL, waProxyModeRequestOverride)
-		route.CountryCode = countryCode
-		route.Source = waProxySourceRequestOverride
-		route.PolicyMode = waProxyModeRequestOverride
-		return route, true, nil
-	}
 	if policy, err := waAccountProxyPolicyFromPayload(req.Payload); err != nil {
 		return WAProxyRoute{}, false, err
 	} else if policy != nil {
@@ -55,9 +45,6 @@ func (s *Server) resolveWAProxyRoute(ctx context.Context, req waProxyResolveRequ
 		if handled || err != nil {
 			return route, useProxy, err
 		}
-	}
-	if route, ok := s.resolveSystemStageProxyRoute(req.Stage, countryCode); ok {
-		return route, true, nil
 	}
 	if route, ok := s.resolveSystemCommonProxyRoute(countryCode); ok {
 		return route, true, nil
@@ -119,26 +106,6 @@ func (s *Server) resolveWAProxyStagePolicy(policy *waappv1.WAProxyStagePolicy, s
 	}
 }
 
-func (s *Server) resolveSystemStageProxyRoute(stage waProxyStage, countryCode string) (WAProxyRoute, bool) {
-	if s == nil {
-		return WAProxyRoute{}, false
-	}
-	if proxyURL := s.systemStageProxyURL(stage); proxyURL != "" {
-		name := string(stage)
-		mode := staticNumberProbeProxyMode
-		if stage == waProxyStageRegistration {
-			name = "registration"
-			mode = staticRegistrationProxyMode
-		}
-		route := staticProxyRoute(name, proxyURL, mode)
-		route.CountryCode = countryCode
-		route.Source = waProxySourceSystemStage
-		route.PolicyMode = mode
-		return route, true
-	}
-	return WAProxyRoute{}, false
-}
-
 func (s *Server) resolveSystemCommonProxyRoute(countryCode string) (WAProxyRoute, bool) {
 	if s == nil || strings.TrimSpace(s.commonProxyURL) == "" {
 		return WAProxyRoute{}, false
@@ -148,20 +115,6 @@ func (s *Server) resolveSystemCommonProxyRoute(countryCode string) (WAProxyRoute
 	route.Source = waProxySourceSystemCommon
 	route.PolicyMode = waProxyModeCommon
 	return route, true
-}
-
-func (s *Server) systemStageProxyURL(stage waProxyStage) string {
-	if s == nil {
-		return ""
-	}
-	switch stage {
-	case waProxyStageProbe:
-		return strings.TrimSpace(s.numberProbeProxyURL)
-	case waProxyStageRegistration:
-		return strings.TrimSpace(s.registrationProxyURL)
-	default:
-		return ""
-	}
 }
 
 func waProxySummary(route WAProxyRoute, useProxy bool) map[string]any {

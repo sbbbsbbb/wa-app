@@ -2,11 +2,7 @@ package app
 
 import "strings"
 
-const (
-	staticCommonProxyMode       = "COMMON_PROXY"
-	staticNumberProbeProxyMode  = "STATIC_NUMBER_PROBE_PROXY"
-	staticRegistrationProxyMode = "STATIC_REGISTRATION_PROXY"
-)
+const staticCommonProxyMode = "COMMON_PROXY"
 
 func staticProxyRoute(name string, proxyURL string, mode string) WAProxyRoute {
 	return WAProxyRoute{
@@ -16,8 +12,4 @@ func staticProxyRoute(name string, proxyURL string, mode string) WAProxyRoute {
 		ProxyMode:   mode,
 		CountryCode: "UNKNOWN",
 	}
-}
-
-func isStaticProxyRoute(route WAProxyRoute) bool {
-	return strings.HasPrefix(strings.TrimSpace(route.RouteID), "static-")
 }

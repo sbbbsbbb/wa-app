@@ -114,7 +114,7 @@ Go 原生实现关系：
 
 `CheckLoginState` 由 wa-app 原生服务直接处理。根据 `app-release-re` 中 chatd login payload 的 `passive` / `short_connect` 以及 `last_heartbeat_login`、`wamo_heartbeat` 逆向线索，用原生 chatd 被动短连接握手检测远端登录态。成功刷新 `last_verified_at` 并触发长连接恢复；明确失效置为 `INVALID`；代理/网络不可达只返回 `UNREACHABLE`，不直接吊销本地登录态。
 
-号码探测路径每次生成随机设备指纹但不持久化；WA 出站代理按账号策略解析：请求调试覆盖、账号阶段策略、账号默认策略、系统阶段默认、`WA_COMMON_PROXY`、直连。账号策略只表达继承、直连或使用通用代理，不暴露或持久化完整代理 URL；`WA_NUMBER_PROBE_PROXY` / `WA_REGISTRATION_PROXY` 只作为系统级阶段默认。代理始终是可选增强；不做出口 IP、风控、CF 或目标连通性预检，wa-app 不按 workspace、号码、账号、号码国家或地区直接持有上游代理 lease。
+号码探测路径每次生成随机设备指纹但不持久化；WA 出站代理按账号策略解析：账号阶段策略、账号默认策略、`WA_COMMON_PROXY`、直连。账号策略只表达继承、直连或使用通用代理，不暴露或持久化完整代理 URL。代理始终是可选增强；不做出口 IP、风控、CF 或目标连通性预检，wa-app 不按 workspace、号码、账号、号码国家或地区直接持有上游代理 lease。
 
 PG/Redis/proxy 都不是 wa-app 启动必需依赖；PG/Redis 缺省使用 `WA_APP_DATA_DIR`（默认 `/var/lib/wa-app`）下的 SQLite durable/runtime 存储，proxy 缺省直连，外部自动化仅能作为调用方存在。
 
