@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"strings"
-	"time"
 
 	waappv1 "github.com/byte-v-forge/wa-app/gen/go/byte/v/forge/waapp/v1"
 )
@@ -152,19 +151,7 @@ func (s *Server) activeContactResolveLoginState(ctx context.Context, accountID s
 }
 
 func (s *Server) contactResolverRunner(ctx context.Context, requestContext *waappv1.RequestContext) (ProtocolEngine, func(), error) {
-	runner := s.runner
-	native, ok := runner.(*NativeEngine)
-	if !ok {
-		return runner, func() {}, nil
-	}
-	proxied, release, _ := s.optionalGatewayProxyEngine(ctx, native, gatewayProxyEngineRequest{
-		Username:      s.longProxyUsername,
-		Purpose:       "WA_CONTACT_SYNC",
-		CorrelationID: firstNonEmpty(requestContext.GetCorrelationId(), requestContext.GetRequestId()),
-		TTL:           defaultContactUsyncTimeout + 10*time.Second,
-		Mode:          DynamicProxySessionModeSticky,
-	})
-	return proxied, release, nil
+	return s.runner, func() {}, nil
 }
 
 func normalizeContactResolveLimit(limit int) int {

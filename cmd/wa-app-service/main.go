@@ -57,10 +57,6 @@ func main() {
 	}
 	service := app.NewServer(store, runtime, engine, clock, ids)
 	service.SetStaticProxyURLs(cfg.CommonProxy, cfg.NumberProbeProxy, cfg.RegistrationProxy)
-	service.SetGatewayProxyUsernames("", cfg.NumberProbeProxyUsername, cfg.RegistrationProxyUsername, "", "")
-	if proxyRuntime := app.NewDynamicProxyRuntime(cfg.ProxyRuntimeAPIBaseURL, cfg.ProxyRuntimeGatewayProtocol); proxyRuntime != nil {
-		service.SetDynamicProxyRuntime(proxyRuntime)
-	}
 	authConfig := newDashboardAuthConfig(cfg.DashboardAuthPass)
 	grpcListenAddr := configValue(cfg.GRPCListenAddr, defaultGRPCListenAddr)
 	dashboardHTTPAddr := configValue(cfg.DashboardHTTPAddr, defaultDashboardHTTPAddr)

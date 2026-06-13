@@ -414,23 +414,7 @@ func (s *Server) accountSettingsRunner(ctx context.Context, requestContext *waap
 			return runner, func() {}, nil
 		}
 	}
-	runner := s.runner
-	native, ok := runner.(*NativeEngine)
-	if !ok || !accountSettingsUsesGatewayProxy(kind) {
-		return runner, func() {}, nil
-	}
-	proxied, release, _ := s.optionalGatewayProxyEngine(ctx, native, gatewayProxyEngineRequest{
-		Username:      s.accountSettingsProxyUsername,
-		Purpose:       "WA_ACCOUNT_SETTINGS",
-		CorrelationID: firstNonEmpty(requestContext.GetCorrelationId(), requestContext.GetRequestId()),
-		TTL:           defaultAccountSettingsProxyTTL,
-		Mode:          DynamicProxySessionModeSticky,
-	})
-	return proxied, release, nil
-}
-
-func accountSettingsUsesGatewayProxy(kind waappv1.AccountSettingsOperationKind) bool {
-	return kind != waappv1.AccountSettingsOperationKind_ACCOUNT_SETTINGS_OPERATION_KIND_UNSPECIFIED
+	return s.runner, func() {}, nil
 }
 
 func (s *Server) accountSettingsLoginState(ctx context.Context, selector *waappv1.AccountLoginSelector) (*waappv1.LoginState, error) {

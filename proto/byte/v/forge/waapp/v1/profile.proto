@@ -50,16 +50,18 @@ enum KeyMaterialStatus {
 }
 
 enum WAProxyPolicyMode {
+  reserved 4;
+
   WA_PROXY_POLICY_MODE_UNSPECIFIED = 0;
   WA_PROXY_POLICY_MODE_INHERIT = 1;
   WA_PROXY_POLICY_MODE_DIRECT = 2;
   WA_PROXY_POLICY_MODE_COMMON_PROXY = 3;
-  WA_PROXY_POLICY_MODE_PROXY_RUNTIME_INGRESS_RULE = 4;
 }
 
 message WAProxyStagePolicy {
+  reserved 2;
+
   WAProxyPolicyMode mode = 1;
-  string proxy_runtime_ingress_rule_id = 2;
 }
 
 message WAAccountProxyPolicy {

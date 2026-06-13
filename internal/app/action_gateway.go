@@ -19,28 +19,12 @@ import (
 
 const transientStateTTL = 30 * time.Minute
 const registrationOTPWaitDefaultTTL = 20 * time.Minute
-const registrationProxyRouteTTL = 10 * time.Minute
 
 type registrationOTPWait struct {
 	WAAccountID           string `json:"wa_account_id"`
 	VerificationRequestID string `json:"verification_request_id"`
 	ResumeURL             string `json:"resume_url"`
 	CreatedAtUnix         int64  `json:"created_at_unix"`
-}
-
-type registrationProxyRouteState struct {
-	AccountID     string `json:"account_id"`
-	RouteID       string `json:"route_id"`
-	LeaseID       string `json:"lease_id"`
-	Username      string `json:"username"`
-	RuleID        string `json:"rule_id"`
-	ProfileID     string `json:"profile_id"`
-	ProxyMode     string `json:"proxy_mode"`
-	CountryCode   string `json:"country_code"`
-	Source        string `json:"source"`
-	PolicyMode    string `json:"policy_mode"`
-	CreatedAtUnix int64  `json:"created_at_unix"`
-	ExpiresAtUnix int64  `json:"expires_at_unix"`
 }
 
 type actionGateway struct{ server *Server }
@@ -96,12 +80,10 @@ func (g *actionGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (g *actionGateway) proxySettings(ctx context.Context, payload map[string]any) (map[string]any, error) {
 	route, useProxy, err := g.server.resolveWAProxyRoute(ctx, waProxyResolveRequest{
-		Stage:         waProxyStageRegistration,
-		Payload:       payload,
-		WAAccountID:   textField(payload, "wa_account_id"),
-		CountryCode:   proxyCountryCodeFromPayload(payload),
-		Purpose:       "WA_PROXY_SETTINGS",
-		CorrelationID: registrationProxyCorrelationID(payload),
+		Stage:       waProxyStageRegistration,
+		Payload:     payload,
+		WAAccountID: textField(payload, "wa_account_id"),
+		CountryCode: proxyCountryCodeFromPayload(payload),
 	})
 	if err != nil {
 		return nil, err
@@ -200,24 +182,12 @@ func (g *actionGateway) requestSMSOTP(ctx context.Context, payload map[string]an
 	}, runner)
 	runner.CloseIdleConnections()
 	if err != nil {
-		if managedRoute {
-			g.releaseProxyRoute(context.Background(), route)
-		}
 		return nil, err
 	}
 	if resp.GetError() != nil {
-		if managedRoute {
-			g.releaseProxyRoute(context.Background(), route)
-		}
 		return map[string]any{"success": false, "error": protoMap(resp.GetError()), "error_message": resp.GetError().GetMessage()}, nil
 	}
 	record := resp.GetVerificationRequest()
-	if managedRoute {
-		if err := g.saveRegistrationProxyRoute(ctx, record.GetVerificationRequestId(), route); err != nil {
-			g.releaseProxyRoute(context.Background(), route)
-			return nil, err
-		}
-	}
 	response := map[string]any{
 		"success":                 record.GetStatus() == waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_SENT || record.GetStatus() == waappv1.VerificationRequestStatus_VERIFICATION_REQUEST_STATUS_WAITING,
 		"status":                  record.GetStatus().String(),
@@ -398,24 +368,12 @@ func (g *actionGateway) submitOTP(ctx context.Context, payload map[string]any) (
 	}, runner)
 	runner.CloseIdleConnections()
 	if err != nil {
-		if managedRoute {
-			g.releaseProxyRoute(context.Background(), route)
-			_ = g.deleteRegistrationProxyRoute(context.Background(), textField(payload, "verification_request_id"))
-		}
 		return nil, err
 	}
 	if resp.GetError() != nil {
-		if managedRoute {
-			g.releaseProxyRoute(context.Background(), route)
-			_ = g.deleteRegistrationProxyRoute(context.Background(), textField(payload, "verification_request_id"))
-		}
 		return map[string]any{"success": false, "error": protoMap(resp.GetError()), "error_message": resp.GetError().GetMessage(), "registration": protoMap(resp.GetRegistration())}, nil
 	}
 	success := resp.GetRegistration().GetStatus() == waappv1.RegistrationStatus_REGISTRATION_STATUS_REGISTERED && resp.GetLoginState().GetStatus() == waappv1.LoginStateStatus_LOGIN_STATE_STATUS_ACTIVE
-	if managedRoute {
-		g.releaseProxyRoute(context.Background(), route)
-		_ = g.deleteRegistrationProxyRoute(context.Background(), textField(payload, "verification_request_id"))
-	}
 	return map[string]any{
 		"success":      success,
 		"status":       resp.GetRegistration().GetStatus().String(),
@@ -434,7 +392,6 @@ func (g *actionGateway) cleanupFailedRegistration(ctx context.Context, payload m
 			WAAccountID:           accountID,
 			VerificationRequestID: verificationRequestID,
 		})
-		_ = g.releaseRegistrationProxyRoute(ctx, verificationRequestID)
 	}
 	if accountID == "" {
 		return map[string]any{"success": true, "deleted": false, "reason": "missing_wa_account_id"}, nil
@@ -620,305 +577,71 @@ func (g *actionGateway) nativeEngineForPayload(payload map[string]any) (*NativeE
 	return engine.WithProxyURL(proxyURL)
 }
 
-func (g *actionGateway) registrationRequestRunner(ctx context.Context, payload map[string]any) (*NativeEngine, DynamicProxyRoute, bool, error) {
+func (g *actionGateway) registrationRequestRunner(ctx context.Context, payload map[string]any) (*NativeEngine, WAProxyRoute, bool, error) {
 	engine, err := g.nativeEngine()
 	if err != nil {
-		return nil, DynamicProxyRoute{}, false, err
+		return nil, WAProxyRoute{}, false, err
 	}
 	route, useProxy, err := g.server.resolveWAProxyRoute(ctx, waProxyResolveRequest{
-		Stage:         waProxyStageRegistration,
-		Payload:       payload,
-		WAAccountID:   textField(payload, "wa_account_id"),
-		CountryCode:   proxyCountryCodeFromPayload(payload),
-		Purpose:       "WA_REGISTRATION_REQUEST_SMS",
-		CorrelationID: registrationProxyCorrelationID(payload),
+		Stage:       waProxyStageRegistration,
+		Payload:     payload,
+		WAAccountID: textField(payload, "wa_account_id"),
+		CountryCode: proxyCountryCodeFromPayload(payload),
 	})
 	if err != nil {
-		return nil, DynamicProxyRoute{}, false, err
+		return nil, WAProxyRoute{}, false, err
 	}
 	if !useProxy {
 		return engine, route, false, nil
 	}
 	proxied, err := engine.WithProxyURL(route.ProxyURL)
 	if err != nil {
-		g.releaseProxyRoute(context.Background(), route)
-		return nil, DynamicProxyRoute{}, false, err
+		return nil, WAProxyRoute{}, false, err
 	}
 	return proxied, route, true, nil
 }
 
-func (g *actionGateway) registrationSubmitRunner(ctx context.Context, payload map[string]any) (*NativeEngine, DynamicProxyRoute, bool, error) {
+func (g *actionGateway) registrationSubmitRunner(ctx context.Context, payload map[string]any) (*NativeEngine, WAProxyRoute, bool, error) {
 	engine, err := g.nativeEngine()
 	if err != nil {
-		return nil, DynamicProxyRoute{}, false, err
+		return nil, WAProxyRoute{}, false, err
 	}
-	verificationRequestID := textField(payload, "verification_request_id")
-	route, useProxy, err := g.registrationSubmitProxyRoute(ctx, payload, verificationRequestID)
+	route, useProxy, err := g.registrationSubmitProxyRoute(ctx, payload)
 	if err != nil {
-		return nil, DynamicProxyRoute{}, false, err
+		return nil, WAProxyRoute{}, false, err
 	}
 	if !useProxy {
 		return engine, route, false, nil
 	}
 	proxied, err := engine.WithProxyURL(route.ProxyURL)
 	if err != nil {
-		g.releaseProxyRoute(context.Background(), route)
-		return nil, DynamicProxyRoute{}, false, err
+		return nil, WAProxyRoute{}, false, err
 	}
 	return proxied, route, true, nil
 }
 
-func (g *actionGateway) registrationSubmitProxyRoute(ctx context.Context, payload map[string]any, verificationRequestID string) (DynamicProxyRoute, bool, error) {
-	route, err := g.loadRegistrationProxyRoute(ctx, verificationRequestID)
-	if err == nil && registrationProxyRouteExpired(route, time.Now().UTC()) {
-		g.releaseProxyRoute(context.Background(), route)
-		_ = g.deleteRegistrationProxyRoute(ctx, verificationRequestID)
-		err = NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "registration proxy session expired", false)
-	}
-	if err == nil {
-		rehydrated, rehydrateErr := g.rehydrateRegistrationProxyRoute(ctx, route, payload)
-		if rehydrateErr != nil {
-			return DynamicProxyRoute{}, false, rehydrateErr
-		}
-		return rehydrated, strings.TrimSpace(rehydrated.ProxyURL) != "", nil
-	}
-	route, useProxy, err := g.server.resolveWAProxyRoute(ctx, waProxyResolveRequest{
-		Stage:         waProxyStageRegistration,
-		Payload:       payload,
-		WAAccountID:   textField(payload, "wa_account_id"),
-		CountryCode:   proxyCountryCodeFromPayload(payload),
-		Purpose:       "WA_REGISTRATION_SUBMIT_OTP",
-		CorrelationID: registrationProxyCorrelationID(payload),
+func (g *actionGateway) registrationSubmitProxyRoute(ctx context.Context, payload map[string]any) (WAProxyRoute, bool, error) {
+	return g.server.resolveWAProxyRoute(ctx, waProxyResolveRequest{
+		Stage:       waProxyStageRegistration,
+		Payload:     payload,
+		WAAccountID: textField(payload, "wa_account_id"),
+		CountryCode: proxyCountryCodeFromPayload(payload),
 	})
-	if err != nil {
-		return DynamicProxyRoute{}, false, err
-	}
-	if useProxy {
-		if saveErr := g.saveRegistrationProxyRoute(ctx, verificationRequestID, route); saveErr != nil {
-			g.releaseProxyRoute(context.Background(), route)
-			return DynamicProxyRoute{}, false, saveErr
-		}
-	}
-	return route, useProxy, nil
 }
 
-func registrationProxyCorrelationID(payload map[string]any) string {
-	ctx := actionContext(payload)
-	return firstNonEmpty(
-		textField(payload, "job_id"),
-		textField(payload, "request_id"),
-		textField(payload, "verification_request_id"),
-		ctx.GetCorrelationId(),
-		ctx.GetRequestId(),
-	)
-}
-
-func (g *actionGateway) rehydrateRegistrationProxyRoute(ctx context.Context, saved DynamicProxyRoute, payload map[string]any) (DynamicProxyRoute, error) {
-	countryCode := proxyRuntimeCountryCode(firstNonEmpty(saved.CountryCode, proxyCountryCodeFromPayload(payload)))
-	req := waProxyResolveRequest{
-		Stage:         waProxyStageRegistration,
-		Payload:       payload,
-		WAAccountID:   textField(payload, "wa_account_id"),
-		CountryCode:   countryCode,
-		Purpose:       "WA_REGISTRATION_SUBMIT_OTP",
-		CorrelationID: registrationProxyCorrelationID(payload),
-	}
-	if strings.TrimSpace(saved.RuleID) != "" {
-		if g == nil || g.server == nil || g.server.proxyRuntime == nil {
-			return DynamicProxyRoute{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "WA proxy runtime is not configured", true)
-		}
-		route, err := g.server.proxyRuntime.GatewayProxyRouteByRuleID(ctx, saved.RuleID, waDynamicProxyRouteRequest(req, countryCode))
-		if err != nil {
-			return DynamicProxyRoute{}, err
-		}
-		return mergeRegistrationProxyRoute(saved, route), nil
-	}
-	if strings.TrimSpace(saved.Username) != "" {
-		if g == nil || g.server == nil || g.server.proxyRuntime == nil {
-			return DynamicProxyRoute{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "WA proxy runtime is not configured", true)
-		}
-		route, err := g.server.proxyRuntime.GatewayProxyRoute(ctx, saved.Username, waDynamicProxyRouteRequest(req, countryCode))
-		if err != nil {
-			return DynamicProxyRoute{}, err
-		}
-		return mergeRegistrationProxyRoute(saved, route), nil
-	}
-	switch saved.ProxyMode {
-	case staticRegistrationProxyMode:
-		if g == nil || g.server == nil || strings.TrimSpace(g.server.registrationProxyURL) == "" {
-			return DynamicProxyRoute{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "WA registration proxy is not configured", true)
-		}
-		route := staticProxyRoute("registration", g.server.registrationProxyURL, staticRegistrationProxyMode)
-		route.CountryCode = countryCode
-		return mergeRegistrationProxyRoute(saved, route), nil
-	case staticCommonProxyMode:
-		if g == nil || g.server == nil || strings.TrimSpace(g.server.commonProxyURL) == "" {
-			return DynamicProxyRoute{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "WA common proxy is not configured", true)
-		}
-		route := staticProxyRoute("common", g.server.commonProxyURL, staticCommonProxyMode)
-		route.CountryCode = countryCode
-		return mergeRegistrationProxyRoute(saved, route), nil
-	default:
-		route, useProxy, err := g.server.resolveWAProxyRoute(ctx, req)
-		if err != nil {
-			return DynamicProxyRoute{}, err
-		}
-		if !useProxy {
-			return DynamicProxyRoute{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_ROUTE_UNAVAILABLE, "registration proxy route is unavailable", true)
-		}
-		return route, nil
-	}
-}
-
-func mergeRegistrationProxyRoute(saved DynamicProxyRoute, route DynamicProxyRoute) DynamicProxyRoute {
-	if saved.RouteID != "" {
-		route.RouteID = saved.RouteID
-	}
-	if saved.AccountID != "" {
-		route.AccountID = saved.AccountID
-	}
-	if saved.LeaseID != "" {
-		route.LeaseID = saved.LeaseID
-	}
-	if saved.RuleID != "" {
-		route.RuleID = saved.RuleID
-	}
-	if saved.ProfileID != "" {
-		route.ProfileID = saved.ProfileID
-	}
-	if saved.ProxyMode != "" {
-		route.ProxyMode = saved.ProxyMode
-	}
-	if saved.CountryCode != "" {
-		route.CountryCode = saved.CountryCode
-	}
-	if saved.Source != "" {
-		route.Source = saved.Source
-	}
-	if saved.PolicyMode != "" {
-		route.PolicyMode = saved.PolicyMode
-	}
-	if !saved.ExpiresAt.IsZero() {
-		route.ExpiresAt = saved.ExpiresAt
-	}
-	return route
-}
-
-func (g *actionGateway) saveRegistrationProxyRoute(ctx context.Context, verificationRequestID string, route DynamicProxyRoute) error {
-	if strings.TrimSpace(verificationRequestID) == "" {
-		return nil
-	}
-	if isStaticProxyRoute(route) {
-		return nil
-	}
-	if strings.TrimSpace(route.RuleID) == "" && strings.TrimSpace(route.Username) == "" && strings.TrimSpace(route.ProxyMode) == "" {
-		return nil
-	}
-	now := time.Now().UTC()
-	expiresAt := route.ExpiresAt
-	if expiresAt.IsZero() {
-		expiresAt = now.Add(registrationProxyRouteTTL)
-	}
-	data, err := json.Marshal(registrationProxyRouteState{
-		AccountID:     route.AccountID,
-		RouteID:       route.RouteID,
-		LeaseID:       route.LeaseID,
-		Username:      route.Username,
-		RuleID:        route.RuleID,
-		ProfileID:     route.ProfileID,
-		ProxyMode:     route.ProxyMode,
-		CountryCode:   route.CountryCode,
-		Source:        route.Source,
-		PolicyMode:    route.PolicyMode,
-		CreatedAtUnix: now.Unix(),
-		ExpiresAtUnix: expiresAt.UTC().Unix(),
-	})
-	if err != nil {
-		return err
-	}
-	return g.server.runtime.SaveTransientState(ctx, registrationProxyRouteKey(verificationRequestID), data, registrationOTPWaitDefaultTTL)
-}
-
-func (g *actionGateway) loadRegistrationProxyRoute(ctx context.Context, verificationRequestID string) (DynamicProxyRoute, error) {
-	if strings.TrimSpace(verificationRequestID) == "" {
-		return DynamicProxyRoute{}, NewError(waappv1.WaErrorCode_WA_ERROR_CODE_VALIDATION_FAILED, "verification_request_id is required", false)
-	}
-	data, err := g.server.runtime.GetTransientState(ctx, registrationProxyRouteKey(verificationRequestID))
-	if err != nil {
-		return DynamicProxyRoute{}, err
-	}
-	var state registrationProxyRouteState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return DynamicProxyRoute{}, err
-	}
-	route := DynamicProxyRoute{AccountID: state.AccountID, RouteID: state.RouteID, LeaseID: state.LeaseID, Username: state.Username, RuleID: state.RuleID, ProfileID: state.ProfileID, ProxyMode: state.ProxyMode, CountryCode: state.CountryCode, Source: state.Source, PolicyMode: state.PolicyMode}
-	if state.ExpiresAtUnix > 0 {
-		route.ExpiresAt = time.Unix(state.ExpiresAtUnix, 0).UTC()
-	}
-	return route, nil
-}
-
-func (g *actionGateway) releaseRegistrationProxyRoute(ctx context.Context, verificationRequestID string) error {
-	if strings.TrimSpace(verificationRequestID) == "" {
-		return nil
-	}
-	route, err := g.loadRegistrationProxyRoute(ctx, verificationRequestID)
-	if err == nil {
-		g.releaseProxyRoute(context.Background(), route)
-	}
-	return g.deleteRegistrationProxyRoute(ctx, verificationRequestID)
-}
-
-func (g *actionGateway) releaseProxyRoute(ctx context.Context, route DynamicProxyRoute) {
-	if g == nil || g.server == nil {
-		return
-	}
-	if isStaticProxyRoute(route) {
-		return
-	}
-	g.server.releaseGatewayProxyRoute(ctx, route, "WA_REGISTRATION")
-}
-
-func (g *actionGateway) deleteRegistrationProxyRoute(ctx context.Context, verificationRequestID string) error {
-	if strings.TrimSpace(verificationRequestID) == "" {
-		return nil
-	}
-	return g.server.runtime.DeleteTransientState(ctx, registrationProxyRouteKey(verificationRequestID))
-}
-
-func registrationProxyRouteKey(verificationRequestID string) string {
-	return "wa-registration-proxy-route:verification:" + verificationRequestID
-}
-
-func registrationProxyRouteExpired(route DynamicProxyRoute, now time.Time) bool {
-	return !route.ExpiresAt.IsZero() && !route.ExpiresAt.After(now)
-}
-
-func registrationProxyRouteMap(route DynamicProxyRoute, managed bool) map[string]any {
+func registrationProxyRouteMap(route WAProxyRoute, managed bool) map[string]any {
 	if !managed {
 		return map[string]any{}
 	}
 	result := map[string]any{
-		"proxy_mode":   firstNonEmpty(route.ProxyMode, "US_STICKY_DYNAMIC_IP"),
-		"country_code": firstNonEmpty(route.CountryCode, "US"),
+		"proxy_mode":   firstNonEmpty(route.ProxyMode, "PROXY"),
+		"country_code": firstNonEmpty(route.CountryCode, "UNKNOWN"),
 	}
 	if strings.TrimSpace(route.AccountID) != "" {
 		result["account_id"] = route.AccountID
 	}
 	if strings.TrimSpace(route.RouteID) != "" {
 		result["route_id"] = route.RouteID
-	}
-	if strings.TrimSpace(route.RuleID) != "" {
-		result["rule_id"] = route.RuleID
-	}
-	if strings.TrimSpace(route.ProfileID) != "" {
-		result["profile_id"] = route.ProfileID
-	}
-	if strings.TrimSpace(route.LeaseID) != "" {
-		result["lease_id"] = route.LeaseID
-	}
-	if strings.TrimSpace(route.Username) != "" {
-		result["proxy_username"] = route.Username
 	}
 	if strings.TrimSpace(route.Source) != "" {
 		result["source"] = route.Source

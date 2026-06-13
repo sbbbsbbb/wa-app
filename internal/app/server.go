@@ -25,16 +25,10 @@ type Server struct {
 	clock   Clock
 	ids     IDGenerator
 
-	proxyRuntime                 *DynamicProxyRuntime
-	commonProxyURL               string
-	numberProbeProxyURL          string
-	registrationProxyURL         string
-	longProxyUsername            string
-	numberProbeProxyUsername     string
-	registrationProxyUsername    string
-	accountSettingsProxyUsername string
-	loginStateCheckProxyUsername string
-	longConnections              *LongConnectionManager
+	commonProxyURL       string
+	numberProbeProxyURL  string
+	registrationProxyURL string
+	longConnections      *LongConnectionManager
 }
 
 func NewServer(store Store, runtime RuntimeState, runner ProtocolEngine, clock Clock, ids IDGenerator) *Server {
@@ -49,22 +43,10 @@ func NewServer(store Store, runtime RuntimeState, runner ProtocolEngine, clock C
 	return server
 }
 
-func (s *Server) SetDynamicProxyRuntime(proxyRuntime *DynamicProxyRuntime) {
-	s.proxyRuntime = proxyRuntime
-}
-
 func (s *Server) SetStaticProxyURLs(common string, numberProbe string, registration string) {
 	s.commonProxyURL = strings.TrimSpace(common)
 	s.numberProbeProxyURL = strings.TrimSpace(numberProbe)
 	s.registrationProxyURL = strings.TrimSpace(registration)
-}
-
-func (s *Server) SetGatewayProxyUsernames(longConnection string, numberProbe string, registration string, accountSettings string, loginStateCheck string) {
-	s.longProxyUsername = strings.TrimSpace(longConnection)
-	s.numberProbeProxyUsername = strings.TrimSpace(numberProbe)
-	s.registrationProxyUsername = strings.TrimSpace(registration)
-	s.accountSettingsProxyUsername = strings.TrimSpace(accountSettings)
-	s.loginStateCheckProxyUsername = strings.TrimSpace(loginStateCheck)
 }
 
 func (s *Server) RunLongConnections(ctx context.Context) error {

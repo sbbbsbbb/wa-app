@@ -100,17 +100,10 @@ func cloneWAProxyStagePolicy(policy *waappv1.WAProxyStagePolicy) *waappv1.WAProx
 		return nil
 	}
 	mode := normalizeWAProxyPolicyMode(policy.GetMode())
-	ruleID := strings.TrimSpace(policy.GetProxyRuntimeIngressRuleId())
-	if mode != waappv1.WAProxyPolicyMode_WA_PROXY_POLICY_MODE_PROXY_RUNTIME_INGRESS_RULE {
-		ruleID = ""
-	}
-	if mode == waappv1.WAProxyPolicyMode_WA_PROXY_POLICY_MODE_INHERIT && ruleID == "" {
+	if mode == waappv1.WAProxyPolicyMode_WA_PROXY_POLICY_MODE_INHERIT {
 		return nil
 	}
-	return &waappv1.WAProxyStagePolicy{
-		Mode:                      mode,
-		ProxyRuntimeIngressRuleId: ruleID,
-	}
+	return &waappv1.WAProxyStagePolicy{Mode: mode}
 }
 
 func normalizeWAProxyPolicyMode(mode waappv1.WAProxyPolicyMode) waappv1.WAProxyPolicyMode {
@@ -130,9 +123,7 @@ func emptyWAAccountProxyPolicy(policy *waappv1.WAAccountProxyPolicy) bool {
 }
 
 func emptyWAProxyStagePolicy(policy *waappv1.WAProxyStagePolicy) bool {
-	return policy == nil ||
-		(normalizeWAProxyPolicyMode(policy.GetMode()) == waappv1.WAProxyPolicyMode_WA_PROXY_POLICY_MODE_INHERIT &&
-			strings.TrimSpace(policy.GetProxyRuntimeIngressRuleId()) == "")
+	return policy == nil || normalizeWAProxyPolicyMode(policy.GetMode()) == waappv1.WAProxyPolicyMode_WA_PROXY_POLICY_MODE_INHERIT
 }
 
 func waAccountProxyPolicyJSON(policy *waappv1.WAAccountProxyPolicy) string {
@@ -185,11 +176,6 @@ func validateWAProxyStagePolicy(name string, policy *waappv1.WAProxyStagePolicy)
 	case waappv1.WAProxyPolicyMode_WA_PROXY_POLICY_MODE_INHERIT,
 		waappv1.WAProxyPolicyMode_WA_PROXY_POLICY_MODE_DIRECT,
 		waappv1.WAProxyPolicyMode_WA_PROXY_POLICY_MODE_COMMON_PROXY:
-		return nil
-	case waappv1.WAProxyPolicyMode_WA_PROXY_POLICY_MODE_PROXY_RUNTIME_INGRESS_RULE:
-		if strings.TrimSpace(policy.GetProxyRuntimeIngressRuleId()) == "" {
-			return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_VALIDATION_FAILED, name+" proxy_runtime_ingress_rule_id is required", false)
-		}
 		return nil
 	default:
 		return NewError(waappv1.WaErrorCode_WA_ERROR_CODE_VALIDATION_FAILED, name+" proxy mode is unsupported", false)

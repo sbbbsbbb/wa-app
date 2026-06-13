@@ -114,10 +114,10 @@ Go 原生实现关系：
 
 `CheckLoginState` 由 wa-app 原生服务直接处理。根据 `app-release-re` 中 chatd login payload 的 `passive` / `short_connect` 以及 `last_heartbeat_login`、`wamo_heartbeat` 逆向线索，用原生 chatd 被动短连接握手检测远端登录态。成功刷新 `last_verified_at` 并触发长连接恢复；明确失效置为 `INVALID`；代理/网络不可达只返回 `UNREACHABLE`，不直接吊销本地登录态。
 
-号码探测路径每次生成随机设备指纹但不持久化；WA 出站代理按账号策略解析：请求调试覆盖、账号阶段策略、账号默认策略、系统阶段默认、`WA_COMMON_PROXY`、直连。账号策略只引用 proxy-runtime ingress rule，不暴露或持久化完整代理 URL；`WA_NUMBER_PROBE_PROXY` / `WA_REGISTRATION_PROXY` 和对应入口用户名只作为系统级默认。代理始终是可选增强；不做出口 IP、风控、CF 或目标连通性预检，wa-app 不按 workspace、号码、账号、号码国家或地区直接持有上游代理 lease。
+号码探测路径每次生成随机设备指纹但不持久化；WA 出站代理按账号策略解析：请求调试覆盖、账号阶段策略、账号默认策略、系统阶段默认、`WA_COMMON_PROXY`、直连。账号策略只表达继承、直连或使用通用代理，不暴露或持久化完整代理 URL；`WA_NUMBER_PROBE_PROXY` / `WA_REGISTRATION_PROXY` 只作为系统级阶段默认。代理始终是可选增强；不做出口 IP、风控、CF 或目标连通性预检，wa-app 不按 workspace、号码、账号、号码国家或地区直接持有上游代理 lease。
 
 PG/Redis/proxy 都不是 wa-app 启动必需依赖；PG/Redis 缺省使用 `WA_APP_DATA_DIR`（默认 `/var/lib/wa-app`）下的 SQLite durable/runtime 存储，proxy 缺省直连，外部自动化仅能作为调用方存在。
 
 ## 9. 前端管理边界
 
-WA 管理页是 `wa-app` 自有独立前端，由 `wa-app-service` 在独立域名根路径直接托管，不再通过 dashboard shell 或 module federation 装载。账号管理是默认首屏；零散诊断动作收敛到工具箱，当前只维护单个手机号/SMS 探测输入，不再保留号码池、批量导入或注册前准备页面。前端和 BFF 使用 libphonenumber 元数据解析号码，所有号码输入都要求显式国家拨号码，不按固定国家码表强解。页面不暴露 `job_id`、`request_id`、代理账号、代理地区、动态代理 URL 或具体代理输入，不直接持久化业务状态，只提交号码状态检测请求并展示直连探测返回的必要状态摘要；敏感字段在展示前脱敏。dashboard BFF 的 `/api/wa/phone/sms-probe` 直连 wa-app 原子能力；配置 proxy-runtime 时可通过固定网关用户名选择出口，未配置或不可用时直连。注册能力由 `/api/wa/register` 直连 wa-app 原生编排，不属于工具箱号码池语义；`/api/wa/login-state-check` 和 `/api/wa/long-connections` 为 wa-app 直连接口。
+WA 管理页是 `wa-app` 自有独立前端，由 `wa-app-service` 在独立域名根路径直接托管，不再通过 dashboard shell 或 module federation 装载。账号管理是默认首屏；零散诊断动作收敛到工具箱，当前只维护单个手机号/SMS 探测输入，不再保留号码池、批量导入或注册前准备页面。前端和 BFF 使用 libphonenumber 元数据解析号码，所有号码输入都要求显式国家拨号码，不按固定国家码表强解。页面不暴露 `job_id`、`request_id`、代理账号、代理地区、动态代理 URL 或具体代理输入，不直接持久化业务状态，只提交号码状态检测请求并展示直连探测返回的必要状态摘要；敏感字段在展示前脱敏。dashboard BFF 的 `/api/wa/phone/sms-probe` 直连 wa-app 原子能力；未配置代理时直连。注册能力由 `/api/wa/register` 直连 wa-app 原生编排，不属于工具箱号码池语义；`/api/wa/login-state-check` 和 `/api/wa/long-connections` 为 wa-app 直连接口。

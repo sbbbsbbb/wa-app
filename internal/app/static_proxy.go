@@ -8,8 +8,8 @@ const (
 	staticRegistrationProxyMode = "STATIC_REGISTRATION_PROXY"
 )
 
-func staticProxyRoute(name string, proxyURL string, mode string) DynamicProxyRoute {
-	return DynamicProxyRoute{
+func staticProxyRoute(name string, proxyURL string, mode string) WAProxyRoute {
+	return WAProxyRoute{
 		AccountID:   "static-" + name + "-proxy",
 		RouteID:     "static-" + name + "-proxy",
 		ProxyURL:    strings.TrimSpace(proxyURL),
@@ -18,6 +18,6 @@ func staticProxyRoute(name string, proxyURL string, mode string) DynamicProxyRou
 	}
 }
 
-func isStaticProxyRoute(route DynamicProxyRoute) bool {
+func isStaticProxyRoute(route WAProxyRoute) bool {
 	return strings.HasPrefix(strings.TrimSpace(route.RouteID), "static-")
 }

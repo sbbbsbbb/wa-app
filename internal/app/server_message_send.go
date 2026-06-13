@@ -99,19 +99,7 @@ func (s *Server) textMessageRunner(ctx context.Context, requestContext *waappv1.
 			return runner, func() {}, nil
 		}
 	}
-	runner := s.runner
-	native, ok := runner.(*NativeEngine)
-	if !ok {
-		return runner, func() {}, nil
-	}
-	proxied, release, _ := s.optionalGatewayProxyEngine(ctx, native, gatewayProxyEngineRequest{
-		Username:      s.longProxyUsername,
-		Purpose:       "WA_MESSAGE_SEND",
-		CorrelationID: firstNonEmpty(requestContext.GetCorrelationId(), requestContext.GetRequestId()),
-		TTL:           defaultTextMessageSendTimeout + 10*time.Second,
-		Mode:          DynamicProxySessionModeSticky,
-	})
-	return proxied, release, nil
+	return s.runner, func() {}, nil
 }
 
 func (s *Server) saveOutboundTextMessage(ctx context.Context, loginState *waappv1.LoginState, contactJID string, providerID string, text string, sentAt time.Time, ackStatus waappv1.MessageAckStatus) error {

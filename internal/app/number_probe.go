@@ -24,18 +24,18 @@ func (s *Server) ProbeNumberSMS(ctx context.Context, payload map[string]any) (ma
 	if phone.GetE164Number() == "" {
 		err := NewError(waappv1.WaErrorCode_WA_ERROR_CODE_VALIDATION_FAILED, "phone is required", false)
 		result := numberProbeError(payload, err)
-		logNumberProbeResult(ctxData, phone, DynamicProxyRoute{}, result)
+		logNumberProbeResult(ctxData, phone, WAProxyRoute{}, result)
 		return result, nil
 	}
 	engine, ok := s.runner.(*NativeEngine)
 	if !ok {
 		err := NewError(waappv1.WaErrorCode_WA_ERROR_CODE_UNSUPPORTED_OPERATION, "native engine is required", false)
 		result := numberProbeError(payload, err)
-		logNumberProbeResult(ctxData, phone, DynamicProxyRoute{}, result)
+		logNumberProbeResult(ctxData, phone, WAProxyRoute{}, result)
 		return result, nil
 	}
 	var lastResult map[string]any
-	var lastRoute DynamicProxyRoute
+	var lastRoute WAProxyRoute
 	for attempt := 1; attempt <= numberProbeMaxAttempts; attempt++ {
 		result, route, retry, reason := s.probeNumberSMSAttempt(ctx, payload, ctxData, phone, engine, attempt)
 		lastResult, lastRoute = result, route
@@ -56,12 +56,12 @@ func (s *Server) ProbeNumberSMS(ctx context.Context, payload map[string]any) (ma
 	return lastResult, nil
 }
 
-func (s *Server) probeNumberSMSAttempt(ctx context.Context, payload map[string]any, ctxData *waappv1.RequestContext, phone *waappv1.PhoneTarget, engine *NativeEngine, attempt int) (map[string]any, DynamicProxyRoute, bool, string) {
-	route, proxyURL, proxy, releaseProxy, err := s.numberProbeProxy(ctx, payload, ctxData.GetCorrelationId())
+func (s *Server) probeNumberSMSAttempt(ctx context.Context, payload map[string]any, ctxData *waappv1.RequestContext, phone *waappv1.PhoneTarget, engine *NativeEngine, attempt int) (map[string]any, WAProxyRoute, bool, string) {
+	route, proxyURL, proxy, releaseProxy, err := s.numberProbeProxy(ctx, payload)
 	if err != nil {
 		result := numberProbeProxyFailure(payload, err)
 		annotateNumberProbeAttempt(result, attempt)
-		return result, DynamicProxyRoute{}, false, ""
+		return result, WAProxyRoute{}, false, ""
 	}
 
 	probeEngine := engine
@@ -100,22 +100,20 @@ func (s *Server) probeNumberSMSAttempt(ctx context.Context, payload map[string]a
 	return result, route, false, ""
 }
 
-func (s *Server) numberProbeProxy(ctx context.Context, payload map[string]any, correlationID string) (DynamicProxyRoute, string, map[string]any, func(), error) {
+func (s *Server) numberProbeProxy(ctx context.Context, payload map[string]any) (WAProxyRoute, string, map[string]any, func(), error) {
 	route, useProxy, err := s.resolveWAProxyRoute(ctx, waProxyResolveRequest{
-		Stage:         waProxyStageProbe,
-		Payload:       payload,
-		WAAccountID:   textField(payload, "wa_account_id"),
-		CountryCode:   proxyCountryCodeFromPayload(payload),
-		Purpose:       "WA_NUMBER_PROBE",
-		CorrelationID: correlationID,
+		Stage:       waProxyStageProbe,
+		Payload:     payload,
+		WAAccountID: textField(payload, "wa_account_id"),
+		CountryCode: proxyCountryCodeFromPayload(payload),
 	})
 	if err != nil {
-		return DynamicProxyRoute{}, "", nil, func() {}, err
+		return WAProxyRoute{}, "", nil, func() {}, err
 	}
 	if !useProxy {
 		return route, "", waProxySummary(route, false), func() {}, nil
 	}
-	return route, route.ProxyURL, waProxySummary(route, true), func() { s.releaseGatewayProxyRoute(context.Background(), route, "WA_NUMBER_PROBE") }, nil
+	return route, route.ProxyURL, waProxySummary(route, true), func() {}, nil
 }
 
 func buildNumberProbeResult(input map[string]any, proxy map[string]any, fingerprint map[string]any, account map[string]any, sms map[string]any) map[string]any {
@@ -420,7 +418,7 @@ func numberProbeError(payload map[string]any, err error) map[string]any {
 	return result
 }
 
-func logNumberProbeResult(ctxData *waappv1.RequestContext, phone *waappv1.PhoneTarget, route DynamicProxyRoute, result map[string]any) {
+func logNumberProbeResult(ctxData *waappv1.RequestContext, phone *waappv1.PhoneTarget, route WAProxyRoute, result map[string]any) {
 	phoneStatus := objectField(result, "phone_status")
 	phoneHash := ""
 	if phone != nil && phone.GetE164Number() != "" {
@@ -445,7 +443,7 @@ func logNumberProbeResult(ctxData *waappv1.RequestContext, phone *waappv1.PhoneT
 	)
 }
 
-func logNumberProbeRetry(ctxData *waappv1.RequestContext, phone *waappv1.PhoneTarget, route DynamicProxyRoute, attempt int, maxAttempts int, reason string) {
+func logNumberProbeRetry(ctxData *waappv1.RequestContext, phone *waappv1.PhoneTarget, route WAProxyRoute, attempt int, maxAttempts int, reason string) {
 	phoneHash := ""
 	if phone != nil && phone.GetE164Number() != "" {
 		phoneHash = stableID(phone.GetE164Number())

@@ -239,17 +239,5 @@ func readReceiptMessages(records []messageActionRecord) []EngineMessageReadRecei
 }
 
 func (s *Server) messageActionRunner(ctx context.Context, requestContext *waappv1.RequestContext) (ProtocolEngine, func(), error) {
-	runner := s.runner
-	native, ok := runner.(*NativeEngine)
-	if !ok {
-		return runner, func() {}, nil
-	}
-	proxied, release, _ := s.optionalGatewayProxyEngine(ctx, native, gatewayProxyEngineRequest{
-		Username:      s.longProxyUsername,
-		Purpose:       "WA_MESSAGE_ACTION",
-		CorrelationID: firstNonEmpty(requestContext.GetCorrelationId(), requestContext.GetRequestId()),
-		TTL:           defaultMessageReadReceiptTimeout + 10*time.Second,
-		Mode:          DynamicProxySessionModeSticky,
-	})
-	return proxied, release, nil
+	return s.runner, func() {}, nil
 }

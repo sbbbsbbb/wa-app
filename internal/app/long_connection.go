@@ -605,21 +605,7 @@ func (s *Server) longConnectionRunner(ctx context.Context, loginState *waappv1.L
 	}
 	input := longConnectionEngineInput(session)
 	input.AppVersion = s.protocolIDAppVersion(ctx, input.ProtocolProfileID)
-	if strings.TrimSpace(engine.activeProxyURL) != "" {
-		return newLongConnectionNativeEngine(engine, longConnectionNativeEngineOptions{Input: input}), nil
-	}
-	proxyEngine, release, proxied := s.optionalGatewayProxyEngine(ctx, engine, gatewayProxyEngineRequest{
-		Username:      s.longProxyUsername,
-		Purpose:       "WA_LONG_CONNECTION",
-		CorrelationID: longConnectionProxyCorrelationID(loginState),
-		TTL:           longConnectionWaitTimeout + longConnectionChatdOpenTimeout,
-		Mode:          DynamicProxySessionModeSticky,
-	})
-	opts := longConnectionNativeEngineOptions{Release: release, Input: input}
-	if proxied {
-		opts.Fallback = engine
-	}
-	return newLongConnectionNativeEngine(proxyEngine, opts), nil
+	return newLongConnectionNativeEngine(engine, longConnectionNativeEngineOptions{Input: input}), nil
 }
 
 func longConnectionEngineInput(session *waappv1.MessageSession) EngineMessageInput {
@@ -633,13 +619,6 @@ func longConnectionEngineInput(session *waappv1.MessageSession) EngineMessageInp
 		ProtocolProfileID:    session.GetProtocolProfileId(),
 		MessageSessionID:     session.GetMessageSessionId(),
 	}
-}
-
-func longConnectionProxyCorrelationID(loginState *waappv1.LoginState) string {
-	if loginState == nil {
-		return ""
-	}
-	return firstNonEmpty(loginState.GetLoginStateId(), loginState.GetWaAccountId())
 }
 
 func longConnectionLeaseKey(key string) string {

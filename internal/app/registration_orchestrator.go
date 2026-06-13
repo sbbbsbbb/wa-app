@@ -43,12 +43,6 @@ func (s *Server) StartRegistration(ctx context.Context, payload map[string]any) 
 	defer func() {
 		_ = gateway.server.runtime.DeleteTransientState(context.Background(), fingerprintRef)
 	}()
-	routeSaved := false
-	defer func() {
-		if managedRoute && !routeSaved {
-			gateway.releaseProxyRoute(context.Background(), route)
-		}
-	}()
 	phone := normalizePhone(phoneFromAction(basePayload))
 	probeResult := runner.probeAccountWithState(ctx, EngineRegistrationInput{AppVersion: defaultWAAppVersion, Phone: phone, DeliveryMethod: method, AuthCodeContext: authCodeContext}, state)
 	logRegistrationProbeResult(basePayload, phone, route, method, probeResult)
@@ -78,20 +72,12 @@ func (s *Server) StartRegistration(ctx context.Context, payload map[string]any) 
 		return nil, err
 	}
 	verificationRequestID := record.GetVerificationRequestId()
-	if managedRoute {
-		if err := gateway.saveRegistrationProxyRoute(ctx, verificationRequestID, route); err != nil {
-			_ = gateway.discardRejectedRegistration(context.Background(), basePayload, waAccountID(account), verificationRequestID)
-			return nil, err
-		}
-		routeSaved = true
-	}
 	wait := registrationOTPWait{
 		WAAccountID:           waAccountID(account),
 		VerificationRequestID: verificationRequestID,
 		CreatedAtUnix:         time.Now().UTC().Unix(),
 	}
 	if err := gateway.saveRegistrationOTPWait(ctx, wait, registrationOTPWaitDefaultTTL); err != nil {
-		_ = gateway.releaseRegistrationProxyRoute(context.Background(), wait.VerificationRequestID)
 		_ = gateway.discardRejectedRegistration(context.Background(), basePayload, waAccountID(account), verificationRequestID)
 		return nil, err
 	}
@@ -120,7 +106,7 @@ func (s *Server) StartRegistration(ctx context.Context, payload map[string]any) 
 	return response, nil
 }
 
-func logRegistrationCodeResult(payload map[string]any, phone *waappv1.PhoneTarget, route DynamicProxyRoute, method waappv1.VerificationDeliveryMethod, result EngineCodeResult) {
+func logRegistrationCodeResult(payload map[string]any, phone *waappv1.PhoneTarget, route WAProxyRoute, method waappv1.VerificationDeliveryMethod, result EngineCodeResult) {
 	phoneHash := ""
 	if phone != nil && phone.GetE164Number() != "" {
 		phoneHash = stableID(phone.GetE164Number())
@@ -143,7 +129,7 @@ func logRegistrationCodeResult(payload map[string]any, phone *waappv1.PhoneTarge
 	)
 }
 
-func logRegistrationProbeResult(payload map[string]any, phone *waappv1.PhoneTarget, route DynamicProxyRoute, method waappv1.VerificationDeliveryMethod, result EngineProbeResult) {
+func logRegistrationProbeResult(payload map[string]any, phone *waappv1.PhoneTarget, route WAProxyRoute, method waappv1.VerificationDeliveryMethod, result EngineProbeResult) {
 	phoneHash := ""
 	if phone != nil && phone.GetE164Number() != "" {
 		phoneHash = stableID(phone.GetE164Number())
@@ -260,7 +246,7 @@ func registrationProbeMethodAvailable(result EngineProbeResult, method waappv1.V
 	return result.Status == waappv1.AccountProbeStatus_ACCOUNT_PROBE_STATUS_REACHABLE && method == waappv1.VerificationDeliveryMethod_VERIFICATION_DELIVERY_METHOD_SMS && result.CanSendSMS
 }
 
-func registrationRequestFailureMap(result EngineCodeResult, method waappv1.VerificationDeliveryMethod, route DynamicProxyRoute, managedRoute bool) map[string]any {
+func registrationRequestFailureMap(result EngineCodeResult, method waappv1.VerificationDeliveryMethod, route WAProxyRoute, managedRoute bool) map[string]any {
 	err := result.Err
 	if err == nil {
 		err = registrationCodeRequestError(result)
@@ -329,7 +315,7 @@ func registrationCodeRequestFlow(result EngineCodeResult, protoErr *waappv1.WaEr
 	}
 }
 
-func registrationProbeFailureMap(result EngineProbeResult, route DynamicProxyRoute, managedRoute bool) map[string]any {
+func registrationProbeFailureMap(result EngineProbeResult, route WAProxyRoute, managedRoute bool) map[string]any {
 	err := result.Err
 	if err == nil {
 		err = registrationProbeError(result)
@@ -445,9 +431,6 @@ func registrationCodeAccountStatus(failed bool) string {
 }
 
 func (g *actionGateway) discardRejectedRegistration(ctx context.Context, basePayload map[string]any, waAccountID string, verificationRequestID string) error {
-	if strings.TrimSpace(verificationRequestID) != "" {
-		_ = g.releaseRegistrationProxyRoute(context.Background(), verificationRequestID)
-	}
 	if strings.TrimSpace(waAccountID) == "" {
 		return nil
 	}
